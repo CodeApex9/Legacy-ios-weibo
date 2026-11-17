@@ -389,6 +389,7 @@ NSString *NSStringFromClass(Class cls);
 - (NSIndexPath *)indexPathForCell:(id)cell;
 - (NSArray *)visibleCells;
 - (void)setTableFooterView:(UIView *)view;
+- (void)setBackgroundView:(UIView *)view;
 @end
 
 @interface UITableViewCell : UIView

@@ -298,6 +298,15 @@ static void RoundView(UIView *view, CGFloat radius)
     [layer setMasksToBounds:YES];
 }
 
+/* 统一页面底色：亚麻贴图平铺（8pt 循环）。三个界面共用同一个函数，
+   避免列表 / 正文 / 账号面板各自写死色值后出现色差。 */
+static UIColor *LinenColor(void)
+{
+    UIImage *tex = [UIImage imageNamed:@"Linen"];
+    if (tex) return [UIColor colorWithPatternImage:tex];
+    return [UIColor colorWithRed:0.93f green:0.92f blue:0.90f alpha:1.0f];
+}
+
 /* V0.3 拟物皮肤：给容器加一圈内嵌虚线缝线。
    缝线不能画进九宫格底图（中间段拉伸会把虚线拉长），所以做成 1pt 高的
    可平铺贴图，用 colorWithPatternImage 铺在四条细视图上——任意长度都是
@@ -895,7 +904,7 @@ static void LayoutComments(void)
     WeiboStoreInitLogin();
 
     UIView *rootView = [[UIView alloc] initWithFrame:bounds];
-    [rootView setBackgroundColor:[UIColor colorWithRed:0.93f green:0.92f blue:0.90f alpha:1.0f]];
+    [rootView setBackgroundColor:LinenColor()];
     [self setView:rootView];
     [rootView release];
 
@@ -975,6 +984,20 @@ static void LayoutComments(void)
     [sTableView setDataSource:self];
     [sTableView setDelegate:self];
     [sTableView setRowHeight:120.0f];
+
+    /* 亚麻底：分组表默认会铺 iOS 自带的浅蓝灰条纹，和 V0.3 的米色纸卡不搭。
+       backgroundView 与 backgroundColor 双保险——不同系统版本对 grouped
+       表背景的绘制路径不一致，只设一个可能仍露出系统条纹。 */
+    {
+        UIColor *linenColor = LinenColor();
+        UIView *bg;
+        [sTableView setBackgroundColor:linenColor];
+        bg = [[UIView alloc] initWithFrame:CGRectMake(0, 0, w, h - navH)];
+        [bg setBackgroundColor:linenColor];
+        [sTableView setBackgroundView:bg];
+        [bg release];
+    }
+
     [[self view] addSubview:sTableView];
 
     /* 下拉刷新头：作为 tableView 的子视图放在内容区上方（负 y），随拖动露出。
@@ -1613,7 +1636,7 @@ static void SetLoadMoreLabel(void)
     CGFloat cardH = statsY + 20.0f + 14.0f;
 
     UIView *overlay = [[UIView alloc] initWithFrame:CGRectMake(w, 0, w, h)];
-    [overlay setBackgroundColor:[UIColor colorWithRed:0.93f green:0.92f blue:0.90f alpha:1.0f]];
+    [overlay setBackgroundColor:LinenColor()];
 
     UIImageView *navBg = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, w, navH)];
     [navBg setImage:[UIImage imageNamed:@"NavBar"]];
@@ -2619,7 +2642,7 @@ static void LoginStateChanged(int state, UIImage *qrcode, NSString *message)
 
     /* 面板：从左侧外滑入。配色与主界面统一——亚麻灰底 + 蓝色导航条 + 白色圆角卡 */
     sAccountPanel = [[UIView alloc] initWithFrame:CGRectMake(-pw, 0, pw, h)];
-    [sAccountPanel setBackgroundColor:[UIColor colorWithRed:0.93f green:0.92f blue:0.90f alpha:1.0f]];
+    [sAccountPanel setBackgroundColor:LinenColor()];
 
     /* 顶部蓝色导航条：复用主界面同一张 NavBar，高度同为 kNavHeight */
     UIImageView *navBg = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, pw, kNavHeight)];

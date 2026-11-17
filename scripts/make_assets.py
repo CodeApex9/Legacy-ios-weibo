@@ -394,6 +394,28 @@ def stitch_px(x, y, w, h, axis, scale=1):
     return (0, 0, 0, 0)
 
 
+def linen_px(x, y, w, h, scale=1):
+    """亚麻背景平铺贴图：8pt 一个循环，经纬线各 1pt。
+
+    只比底色深 3~5 级，远看是均匀米色、近看才有布纹；在 2x 图上循环 16px，
+    屏幕上不会看出重复节奏。用 UIColor colorWithPatternImage: 铺满表格背景，
+    替换 iOS 分组表自带的浅蓝灰条纹。
+    """
+    u = x // scale
+    v = y // scale
+    d = ((u * 7 + v * 13) % 3) - 1          # -1..1 确定性微噪，打破死板网格
+    if u % 4 == 0:
+        d -= 1                               # 经线压暗
+    if v % 4 == 0:
+        d -= 1                               # 纬线压暗
+    if u % 4 == 0 and v % 4 == 0:
+        d += 2                               # 交织点回到亮部，形成提亮交点
+    r = LINEN[0] + d * 2
+    g = LINEN[1] + d * 2
+    b = LINEN[2] + d * 2
+    return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "Resources"
     os.makedirs(out, exist_ok=True)
@@ -402,6 +424,11 @@ def main():
                            ("NavBar@2x.png", 640, NAV_PT * 2, 2)]:
         write_png_pixels(os.path.join(out, name), w, h,
                          lambda x, y, ww, hh, s=sc: nav_px(x, y, ww, hh, s))
+
+    # 亚麻背景平铺贴图：8x8pt 一个循环（@2x 16x16px）
+    for name, w, h, sc in [("Linen.png", 8, 8, 1), ("Linen@2x.png", 16, 16, 2)]:
+        write_png_pixels(os.path.join(out, name), w, h,
+                         lambda x, y, ww, hh, s=sc: linen_px(x, y, ww, hh, s))
 
     for name, w, h in [("Avatar.png", 44, 44), ("Avatar@2x.png", 88, 88)]:
         write_png_pixels(os.path.join(out, name), w, h, avatar_px)
