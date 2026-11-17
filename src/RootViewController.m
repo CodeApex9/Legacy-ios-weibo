@@ -2803,14 +2803,14 @@ static void LoginStateChanged(int state, UIImage *qrcode, NSString *message)
     /* 数字/性别/简介 */
     [self fillAccountPanel];
 
-    /* 返回按钮：蓝条内水平居中，立体胶囊（与正文页返回同一款，宽度更宽） */
+    /* 返回按钮：贴左（与正文页返回同一水平位置、同尺寸），文字去掉前置箭头 */
     UIButton *backBtn = [UIButton buttonWithType:kButtonTypeRounded];
-    [backBtn setFrame:CGRectMake((pw - 80.0f) / 2.0f, 13.0f, 80.0f, 26.0f)];
-    [backBtn setTitle:@"‹ 返回" forState:kControlStateNormal];
+    [backBtn setFrame:CGRectMake(8.0f, 13.0f, 60.0f, 26.0f)];
+    [backBtn setTitle:@"返回" forState:kControlStateNormal];
     [backBtn setTitleColor:[UIColor whiteColor] forState:kControlStateNormal];
     [backBtn setTitleColor:[UIColor colorWithRed:0.86f green:0.92f blue:0.99f alpha:1.0f]
                    forState:kControlStateHighlighted];
-    [[backBtn titleLabel] setFont:[UIFont boldSystemFontOfSize:15.0f]];
+    [[backBtn titleLabel] setFont:[UIFont boldSystemFontOfSize:14.0f]];
     StylePillButton(backBtn, @"BtnNavy", @"BtnNavyDown", 11.0f,
                     [UIColor colorWithRed:0.02f green:0.09f blue:0.18f alpha:0.85f]);
     [backBtn addTarget:self action:@selector(closeAccount:)
