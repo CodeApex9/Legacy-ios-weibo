@@ -298,6 +298,52 @@ static void RoundView(UIView *view, CGFloat radius)
     [layer setMasksToBounds:YES];
 }
 
+/* V0.3 拟物皮肤：给容器加一圈内嵌虚线缝线。
+   缝线不能画进九宫格底图（中间段拉伸会把虚线拉长），所以做成 1pt 高的
+   可平铺贴图，用 colorWithPatternImage 铺在四条细视图上——任意长度都是
+   等距 3pt 实 / 3pt 虚，和 iOS 5 的皮革缝线观感一致。 */
+static void AddStitchBorder(UIView *host, CGFloat inset)
+{
+    UIImage *h = [UIImage imageNamed:@"StitchH"];
+    UIImage *v = [UIImage imageNamed:@"StitchV"];
+    CGRect b;
+    CGFloat w, hh;
+    UIView *top, *bottom, *left, *right;
+
+    if (!host || !h || !v) return;
+    b = [host bounds];
+    w = CGRectGetWidth(b);
+    hh = CGRectGetHeight(b);
+    if (w < inset * 2.0f + 10.0f || hh < inset * 2.0f + 10.0f) return;
+
+    top = [[UIView alloc] initWithFrame:CGRectMake(inset, inset, w - inset * 2.0f, 1.0f)];
+    bottom = [[UIView alloc] initWithFrame:CGRectMake(inset, hh - inset - 1.0f,
+                                                      w - inset * 2.0f, 1.0f)];
+    left = [[UIView alloc] initWithFrame:CGRectMake(inset, inset + 3.0f, 1.0f,
+                                                    hh - inset * 2.0f - 6.0f)];
+    right = [[UIView alloc] initWithFrame:CGRectMake(w - inset - 1.0f, inset + 3.0f, 1.0f,
+                                                     hh - inset * 2.0f - 6.0f)];
+
+    [top setBackgroundColor:[UIColor colorWithPatternImage:h]];
+    [bottom setBackgroundColor:[UIColor colorWithPatternImage:h]];
+    [left setBackgroundColor:[UIColor colorWithPatternImage:v]];
+    [right setBackgroundColor:[UIColor colorWithPatternImage:v]];
+
+    [top setUserInteractionEnabled:NO];
+    [bottom setUserInteractionEnabled:NO];
+    [left setUserInteractionEnabled:NO];
+    [right setUserInteractionEnabled:NO];
+
+    [host addSubview:top];
+    [host addSubview:bottom];
+    [host addSubview:left];
+    [host addSubview:right];
+    [top release];
+    [bottom release];
+    [left release];
+    [right release];
+}
+
 static NSDictionary *PostAt(NSUInteger idx)
 {
     if (sPosts && idx < [sPosts count]) return [sPosts objectAtIndex:idx];
@@ -2581,12 +2627,24 @@ static void LoginStateChanged(int state, UIImage *qrcode, NSString *message)
     [sAccountPanel addSubview:navBg];
     [navBg release];
 
-    /* 白色圆角资料卡：和主界面卡片同款 */
-    UIView *card = [[UIView alloc] initWithFrame:CGRectMake(10.0f, kNavHeight + 10.0f,
-                                                            pw - 20.0f, 218.0f)];
-    [card setBackgroundColor:[UIColor whiteColor]];
-    RoundView(card, 8.0f);
+    /* V0.3 资料卡：纸白九宫格底图（自带圆角与 1px 描边）+ 内嵌虚线缝线。
+       圆角由底图自带，这里不再 masksToBounds，避免把缝线在四角切掉。 */
+    /* 卡片高度从 218 收到 160：内容和蓝条下 116pt 处结束，留 16pt 呼吸；
+       原来的 218 在加上缝线后底部会空出一大块，看起来像漏排内容。 */
+    UIImageView *card = [[UIImageView alloc] initWithFrame:CGRectMake(10.0f, kNavHeight + 10.0f,
+                                                                     pw - 20.0f, 160.0f)];
+    {
+        UIImage *cardImg = [UIImage imageNamed:@"PanelCard"];
+        if (cardImg) {
+            [card setImage:[cardImg resizableImageWithCapInsets:
+                              UIEdgeInsetsMake(16.0f, 16.0f, 16.0f, 16.0f)]];
+        } else {
+            [card setBackgroundColor:[UIColor whiteColor]];
+            RoundView(card, 8.0f);
+        }
+    }
     [sAccountPanel addSubview:card];
+    AddStitchBorder(card, 6.0f);
     [card release];
 
     /* 圆形大头像：资料卡内左侧，白色描边 */

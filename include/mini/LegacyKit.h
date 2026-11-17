@@ -284,11 +284,15 @@ NSString *NSStringFromClass(Class cls);
 + (void)commitAnimations;
 @end
 
+@class UIImage;
+
 @interface UIColor : NSObject
 + (UIColor *)whiteColor;
 + (UIColor *)blackColor;
 + (UIColor *)clearColor;
 + (UIColor *)colorWithRed:(CGFloat)r green:(CGFloat)g blue:(CGFloat)b alpha:(CGFloat)a;
+/* 平铺贴图做底色（iOS 2.0 起可用）：V0.3 用它把 1pt 缝线铺成等距虚线 */
++ (UIColor *)colorWithPatternImage:(UIImage *)image;
 @end
 
 @interface UIFont : NSObject
