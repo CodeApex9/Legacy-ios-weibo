@@ -11,3 +11,6 @@ Resources/*.png
 screenshots/
 .DS_Store
 __pycache__/
+
+# 交付产物（由源码重建，不入库）
+dist/
