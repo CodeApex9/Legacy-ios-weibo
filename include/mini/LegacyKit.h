@@ -260,6 +260,7 @@ NSString *NSStringFromClass(Class cls);
 - (CGRect)frame;
 - (CGRect)bounds;
 - (void)setHidden:(BOOL)hidden;
+- (id)hitTest:(CGPoint)point withEvent:(id)event;   /* 自检用：确认按钮命中 */
 - (BOOL)isHidden;
 - (void)setAlpha:(CGFloat)alpha;
 - (void)setTag:(NSInteger)tag;
@@ -318,10 +319,13 @@ NSString *NSStringFromClass(Class cls);
 - (void)setBackgroundColor:(UIColor *)color;
 - (void)setTextAlignment:(NSInteger)alignment;
 - (void)setNumberOfLines:(NSInteger)lines;
+- (void)setShadowColor:(UIColor *)color;
+- (void)setShadowOffset:(CGSize)offset;
 @end
 
 @interface UIControl : UIView
 - (void)addTarget:(id)target action:(SEL)action forControlEvents:(NSUInteger)events;
+- (void)sendActionsForControlEvents:(NSUInteger)controlEvents;
 @end
 
 @interface UIButton : UIControl
@@ -329,6 +333,8 @@ NSString *NSStringFromClass(Class cls);
 - (UILabel *)titleLabel;
 - (void)setTitle:(NSString *)title forState:(NSUInteger)state;
 - (void)setTitleColor:(UIColor *)color forState:(NSUInteger)state;
+- (void)setBackgroundImage:(UIImage *)image forState:(NSUInteger)state;
+- (void)setTitleShadowColor:(UIColor *)color forState:(NSUInteger)state;
 @end
 
 @interface UIScrollView : UIView
@@ -425,6 +431,9 @@ NSString *NSStringFromClass(Class cls);
 @interface LegacyLayerShim : NSObject
 - (void)setCornerRadius:(CGFloat)radius;
 - (void)setMasksToBounds:(BOOL)flag;
+- (void)setShadowOpacity:(CGFloat)opacity;
+- (void)setShadowOffset:(CGSize)offset;
+- (void)setShadowRadius:(CGFloat)radius;
 - (void)renderInContext:(void *)ctx;   /* ctx 真实类型 CGContextRef，截图用 */
 @end
 

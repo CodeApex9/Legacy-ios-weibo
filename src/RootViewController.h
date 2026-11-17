@@ -4,6 +4,10 @@
 @interface RootViewController : UIViewController
 - (void)refreshTapped:(id)sender;
 - (void)feedChanged:(id)sender;
+- (void)tabHot:(id)sender;               /* 自绘 tab：热门 */
+- (void)tabFollow:(id)sender;            /* 自绘 tab：关注 */
+- (void)tabMine:(id)sender;              /* 自绘 tab：我的 */
+- (void)switchTabIndex:(int)idx sender:(id)sender;
 - (void)loginTapped:(id)sender;
 - (void)closeLogin:(id)sender;
 - (void)refreshQRCode:(id)sender;
@@ -41,6 +45,10 @@
                         context:(void *)context;
 #ifdef ACCOUNTCHECK
 - (void)diagAccountCheck;
+#endif
+#ifdef TABSCHECK
+- (void)diagTabHit;
+- (void)diagTabAfter;
 #endif
 #ifdef GALLERY
 - (void)galleryList;

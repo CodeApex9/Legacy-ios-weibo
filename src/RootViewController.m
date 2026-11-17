@@ -45,10 +45,15 @@ static UIView       *sAccountShade = nil;
 static UIImageView  *sAccountBigAvatar = nil;
 static UILabel      *sAccountName = nil;
 static int           sAccountAnimating = 0;
-static UISegmentedControl *sSegment = nil;
-/* tab 皮肤：深蓝槽 + 亮蓝浮块，独立视图垫在 sSegment 下方（控件本身透明） */
+/* 三个 tab 自绘：深蓝槽 + 亮蓝浮块 + 三个 UILabel，命中用三个透明按钮。
+   不用 UISegmentedControl —— 它会在凹槽上自绘分隔线与 bevel（实测留下
+   0.5pt 竖线），并且分段背景图会被内部裁剪，几何不可控。自绘后外观完全
+   由我们决定，frame 与原来一致，位置不变。 */
 static UIImageView  *sSegGroove = nil;
 static UIImageView  *sSegBlock = nil;
+static UIView       *sTabHit = nil;                 /* 透明命中层容器 */
+static UILabel      *sTabLabels[3] = {nil, nil, nil};
+static int           sTabIndex = 0;                 /* 0 热门 1 关注 2 我的 */
 static NSArray      *sPosts = nil;
 static id            sSelf = nil;
 
@@ -79,70 +84,45 @@ static void SetLoadMoreLabel(void);
 /* RoundView 定义在下方，这里先声明（C 需先见声明） */
 static void RoundView(UIView *view, CGFloat radius);
 
-/* 方案 A 三个 tab 皮肤。
-   做法：UISegmentedControl 只负责文字与点击（背景全透明），
-   深蓝槽(sSegGroove) + 亮蓝浮块(sSegBlock) 是两个独立 UIImageView，
-   垫在控件下方。块的位置由 layoutSegmentBlock 按选中段计算——
-   这样四边留缝和圆角完全可控，不受系统绘制分段背景图的规则干扰。 */
-static void ApplySegmentSkin(UISegmentedControl *seg)
-{
-    /* 透明底图：让系统不再画默认的灰底/分隔线 */
-    UIImage *clear = [UIImage imageNamed:@"SegDivider"];   /* 1x1 全透明 RGBA */
-    if (clear) {
-        [seg setBackgroundImage:clear
-                       forState:kControlStateNormal barMetrics:kBarMetricsDefault];
-        [seg setBackgroundImage:clear
-                       forState:kControlStateSelected barMetrics:kBarMetricsDefault];
-        [seg setBackgroundImage:clear
-                       forState:kControlStateHighlighted barMetrics:kBarMetricsDefault];
-        /* 补全所有左右状态组合，否则未覆盖的组合会落回系统默认深色分隔线 */
-        {
-            const NSInteger st[3] = { kControlStateNormal,
-                                      kControlStateSelected,
-                                      kControlStateHighlighted };
-            int li, ri;
-            for (li = 0; li < 3; li++) {
-                for (ri = 0; ri < 3; ri++) {
-                    [seg setDividerImage:clear
-                     forLeftSegmentState:st[li] rightSegmentState:st[ri]
-                              barMetrics:kBarMetricsDefault];
-                }
-            }
-        }
-    }
-
-    UIColor *dimText = [UIColor colorWithRed:0.82f green:0.89f blue:0.97f alpha:1.0f];
-    UIColor *shadow = [UIColor colorWithRed:0.05f green:0.14f blue:0.28f alpha:0.7f];
-    NSValue *offset = [NSValue valueWithCGSize:CGSizeMake(0.0f, -1.0f)];
-    NSMutableDictionary *attrNormal = [[NSMutableDictionary alloc] init];
-    [attrNormal setObject:dimText forKey:kUITextAttributeTextColor];
-    [attrNormal setObject:shadow forKey:kUITextAttributeTextShadowColor];
-    [attrNormal setObject:offset forKey:kUITextAttributeTextShadowOffset];
-    [seg setTitleTextAttributes:attrNormal forState:kControlStateNormal];
-    [attrNormal release];
-
-    NSMutableDictionary *attrSelected = [[NSMutableDictionary alloc] init];
-    [attrSelected setObject:[UIColor whiteColor] forKey:kUITextAttributeTextColor];
-    [attrSelected setObject:shadow forKey:kUITextAttributeTextShadowColor];
-    [attrSelected setObject:offset forKey:kUITextAttributeTextShadowOffset];
-    [seg setTitleTextAttributes:attrSelected forState:kControlStateSelected];
-    [attrSelected release];
-}
-
 /* 按当前选中段，把亮蓝块移到该段位置（块四边留缝由图片透明边自动形成）。
-   段宽 = 控件宽/3，控件 frame 已知，纯算术，不动布局。 */
+   段宽 = 槽宽/3，槽 frame 已知，纯算术，不动布局。 */
 static void layoutSegmentBlock(void)
 {
     CGRect f;
     CGFloat segW;
-    NSInteger idx;
-    if (!sSegment || !sSegBlock) return;
-    f = [sSegment frame];
+    int idx;
+    if (!sSegGroove || !sSegBlock) return;
+    f = [sSegGroove frame];
     segW = CGRectGetWidth(f) / 3.0f;
-    idx = [sSegment selectedSegmentIndex];
+    idx = sTabIndex;
     if (idx < 0 || idx > 2) idx = 0;
     [sSegBlock setFrame:CGRectMake(f.origin.x + segW * (CGFloat)idx,
                                    f.origin.y, segW, CGRectGetHeight(f))];
+}
+
+/* tab 文字：选中纯白、未选中淡蓝白，都带 1pt 向上投影压出刻痕感 */
+static void StyleTabLabel(UILabel *lab, int selected)
+{
+    if (!lab) return;
+    if (selected) {
+        [lab setTextColor:[UIColor whiteColor]];
+        [lab setShadowColor:[UIColor colorWithRed:0.05f green:0.14f blue:0.28f alpha:0.85f]];
+    } else {
+        [lab setTextColor:[UIColor colorWithRed:0.82f green:0.89f blue:0.97f alpha:1.0f]];
+        [lab setShadowColor:[UIColor colorWithRed:0.05f green:0.12f blue:0.24f alpha:0.75f]];
+    }
+    [lab setShadowOffset:CGSizeMake(0.0f, -1.0f)];
+}
+
+/* 静默切换：只移动浮块 + 换字色，不触发 feedChanged:。
+   与原先 setSelectedSegmentIndex: 的语义一致（程序设置不触发事件）。 */
+static void SetTabIndex(int idx)
+{
+    int i;
+    if (idx < 0 || idx > 2) idx = 0;
+    sTabIndex = idx;
+    layoutSegmentBlock();
+    for (i = 0; i < 3; i++) StyleTabLabel(sTabLabels[i], i == idx);
 }
 
 /* 加载提示跟当前 tab 联动：热门 / 关注 / 我的 */
@@ -196,6 +176,9 @@ static int           sCommentChkStage = 0;
 #endif
 #ifdef GALLERY
 static int           sGalleryStage = 0;
+#endif
+#ifdef TABSCHECK
+static int           sTabChkStage = 0;
 #endif
 
 #ifdef LEGACY_DIAG
@@ -305,6 +288,36 @@ static UIColor *LinenColor(void)
     UIImage *tex = [UIImage imageNamed:@"Linen"];
     if (tex) return [UIColor colorWithPatternImage:tex];
     return [UIColor colorWithRed:0.93f green:0.92f blue:0.90f alpha:1.0f];
+}
+
+/* 立体胶囊按钮：九宫格底图（只横向拉伸，竖向渐变不变形）+ 图层投影。
+   底图四角透明，投影沿胶囊轮廓走，所以这里不要 masksToBounds / RoundView，
+   否则阴影会被方框裁掉、圆角也会被二次裁剪出锯齿。 */
+static void StylePillButton(UIButton *btn, NSString *normal, NSString *down,
+                            CGFloat capX, UIColor *titleShadow)
+{
+    UIImage *n = [UIImage imageNamed:normal];
+    UIImage *d = [UIImage imageNamed:down];
+    if (n) {
+        [btn setBackgroundImage:[n resizableImageWithCapInsets:
+                                 UIEdgeInsetsMake(0.0f, capX, 0.0f, capX)]
+                       forState:kControlStateNormal];
+    }
+    if (d) {
+        [btn setBackgroundImage:[d resizableImageWithCapInsets:
+                                 UIEdgeInsetsMake(0.0f, capX, 0.0f, capX)]
+                       forState:kControlStateHighlighted];
+    }
+    {
+        LegacyLayerShim *l = (LegacyLayerShim *)[btn layer];
+        [l setShadowOpacity:0.5f];
+        [l setShadowOffset:CGSizeMake(0.0f, 1.0f)];
+        [l setShadowRadius:1.0f];
+    }
+    if (titleShadow) {
+        [[btn titleLabel] setShadowColor:titleShadow];
+        [[btn titleLabel] setShadowOffset:CGSizeMake(0.0f, -1.0f)];
+    }
 }
 
 /* V0.3 拟物皮肤：给容器加一圈内嵌虚线缝线。
@@ -528,6 +541,16 @@ static void ReloadTable(void)
     }
 #endif
 
+#ifdef TABSCHECK
+    /* tab 命中自检：自绘 tab 之后，必须确认三个透明按钮真的在文字层之上、
+       并且点击能走到 switchTabIndex:（而不是被别的视图挡住）。 */
+    if (state == 2 && sSelf && !sTabChkStage) {
+        sTabChkStage = 1;
+        [(RootViewController *)sSelf performSelector:@selector(diagTabHit)
+                                          withObject:nil afterDelay:1.0];
+    }
+#endif
+
 #ifdef GALLERY
     /* 只读采集：等数据真正落地再拍，避免拍到「正在加载」的空白页 */
     if (sSelf && sPosts && [sPosts count] > 0) {
@@ -548,7 +571,7 @@ static void ReloadTable(void)
         if (sCommentChkStage == 0) {
             sCommentChkStage = 1;
             diag("COMMENTCHECK: switch to feed 0");
-            [sSegment setSelectedSegmentIndex:0];
+            SetTabIndex(0);
             [(RootViewController *)sSelf feedChanged:nil];
         } else if (sCommentChkStage == 1 && state == 2 && WeiboStoreFeed() == 0) {
             sCommentChkStage = 2;
@@ -571,7 +594,7 @@ static void ReloadTable(void)
                     sFeedChkSwitched = 1;
                     diag([[NSString stringWithFormat:@"FEEDCHECK: switch feed=%d",
                            sFeedChkPhase] UTF8String]);
-                    [sSegment setSelectedSegmentIndex:sFeedChkPhase];
+                    SetTabIndex(sFeedChkPhase);
                     [(RootViewController *)sSelf feedChanged:nil];
                 }
             } else if (sFeedChkStage == 0) {
@@ -943,36 +966,68 @@ static void LayoutComments(void)
     [self refreshAccountArea];
     if (WeiboStoreLoggedIn()) WeiboStoreFetchProfile();
 
-    /* 中间：热门 / 关注 / 我的 三段。UISegmentedControl 从 iOS 5 就有，
-       UIKit.tbd 已登记类符号，无需额外链接。 */
-    NSArray *tabs = [NSArray arrayWithObjects:@"热门", @"关注", @"我的", nil];
-    CGRect segFrame = CGRectMake(68.0f, 12.0f, w - 136.0f, 28.0f);
+    /* 中间：热门 / 关注 / 我的 三段，全部自绘（见文件头 sTabLabels 说明） */
+    {
+        NSArray *tabs = [NSArray arrayWithObjects:@"热门", @"关注", @"我的", nil];
+        CGRect segFrame = CGRectMake(68.0f, 12.0f, w - 136.0f, 28.0f);
+        CGFloat segW = CGRectGetWidth(segFrame) / 3.0f;
+        int i;
 
-    /* 深蓝槽：独立视图垫底，圆角矩形（方案 A 的凹槽） */
-    sSegGroove = [[UIImageView alloc] initWithFrame:segFrame];
-    [sSegGroove setImage:[UIImage imageNamed:@"SegNormal"]];
-    [sSegGroove setContentMode:kContentModeScaleToFill];
-    [sSegGroove setBackgroundColor:[UIColor colorWithRed:0.14f green:0.29f blue:0.49f alpha:1.0f]];
-    RoundView(sSegGroove, 6.0f);
-    [[self view] addSubview:sSegGroove];
-    [sSegGroove release];
+        /* 深蓝槽：独立视图垫底，圆角矩形（方案 A 的凹槽） */
+        sSegGroove = [[UIImageView alloc] initWithFrame:segFrame];
+        [sSegGroove setImage:[UIImage imageNamed:@"SegNormal"]];
+        [sSegGroove setContentMode:kContentModeScaleToFill];
+        [sSegGroove setBackgroundColor:[UIColor colorWithRed:0.14f green:0.29f blue:0.49f alpha:1.0f]];
+        RoundView(sSegGroove, 6.0f);
+        [[self view] addSubview:sSegGroove];
+        [sSegGroove release];
 
-    /* 亮蓝浮块：四边留缝、独立圆角，位置随选中段移动 */
-    sSegBlock = [[UIImageView alloc] initWithFrame:segFrame];
-    [sSegBlock setImage:[UIImage imageNamed:@"SegBlock"]];
-    [sSegBlock setContentMode:kContentModeScaleToFill];
-    [[self view] addSubview:sSegBlock];
-    [sSegBlock release];
+        /* 亮蓝浮块：四边留缝、独立圆角，位置随选中段移动 */
+        sSegBlock = [[UIImageView alloc] initWithFrame:segFrame];
+        [sSegBlock setImage:[UIImage imageNamed:@"SegBlock"]];
+        [sSegBlock setContentMode:kContentModeScaleToFill];
+        [[self view] addSubview:sSegBlock];
+        [sSegBlock release];
 
-    sSegment = [[UISegmentedControl alloc] initWithItems:tabs];
-    [sSegment setFrame:segFrame];
-    [sSegment setSegmentedControlStyle:kSegmentedStyleBar];
-    [sSegment setSelectedSegmentIndex:0];
-    [sSegment addTarget:self action:@selector(feedChanged:)
-      forControlEvents:kControlEventValueChanged];
-    ApplySegmentSkin(sSegment);  /* 方案 A 立体皮肤：控件透明，只留文字 */
-    layoutSegmentBlock();        /* 浮块定位到第 0 段 */
-    [[self view] addSubview:sSegment];
+        /* 文字层 + 命中层：文字在下、透明按钮在上，视觉上只剩浮块与字 */
+        sTabHit = [[UIView alloc] initWithFrame:segFrame];
+        [sTabHit setBackgroundColor:[UIColor clearColor]];
+        [[self view] addSubview:sTabHit];
+        [sTabHit release];
+
+        for (i = 0; i < 3; i++) {
+            CGRect cell = CGRectMake(segW * (CGFloat)i, 0.0f, segW, CGRectGetHeight(segFrame));
+            UILabel *lab = [[UILabel alloc] initWithFrame:cell];
+            UIButton *hit;
+            [lab setText:[tabs objectAtIndex:i]];
+            [lab setFont:[UIFont boldSystemFontOfSize:13.0f]];
+            [lab setTextAlignment:kTextAlignCenter];
+            [lab setBackgroundColor:[UIColor clearColor]];
+            [sTabHit addSubview:lab];
+            sTabLabels[i] = lab;      /* 父视图持有，这里只借指针改字色 */
+            [lab release];
+
+            hit = [UIButton buttonWithType:kButtonTypeRounded];
+            [hit setFrame:cell];
+            [hit setBackgroundColor:[UIColor clearColor]];
+            /* 透明底图覆盖三个状态：否则 rounded 按钮按下时会闪一块蓝色 */
+            [hit setBackgroundImage:[UIImage imageNamed:@"SegDivider"]
+                           forState:kControlStateNormal];
+            [hit setBackgroundImage:[UIImage imageNamed:@"SegDivider"]
+                           forState:kControlStateHighlighted];
+            [hit setBackgroundImage:[UIImage imageNamed:@"SegDivider"]
+                           forState:kControlStateSelected];
+            {
+                SEL act = @selector(tabHot:);
+                if (i == 1) act = @selector(tabFollow:);
+                else if (i == 2) act = @selector(tabMine:);
+                [hit addTarget:self action:act forControlEvents:kControlEventTouchUpInside];
+            }
+            [sTabHit addSubview:hit];
+        }
+
+        SetTabIndex(0);        /* 初始选中热门，顺带定位浮块与字色 */
+    }
 
     /* 右侧原「刷新」按钮已移除（用户要求）。刷新仍可用下拉手势触发，
        refreshTapped: 保留不删，避免影响其他调用点。 */
@@ -1652,11 +1707,16 @@ static void SetLoadMoreLabel(void)
     [overlay addSubview:title];
     [title release];
 
+    /* 返回：立体胶囊（深蓝渐变 + 玻璃高光 + 描边 + 投影），与导航条材质同族 */
     UIButton *back = [UIButton buttonWithType:kButtonTypeRounded];
     [back setFrame:CGRectMake(8.0f, 13.0f, 60.0f, 26.0f)];
     [back setTitle:@"返回" forState:kControlStateNormal];
     [back setTitleColor:[UIColor whiteColor] forState:kControlStateNormal];
+    [back setTitleColor:[UIColor colorWithRed:0.86f green:0.92f blue:0.99f alpha:1.0f]
+                forState:kControlStateHighlighted];
     [[back titleLabel] setFont:[UIFont boldSystemFontOfSize:14.0f]];
+    StylePillButton(back, @"BtnNavy", @"BtnNavyDown", 11.0f,
+                    [UIColor colorWithRed:0.02f green:0.09f blue:0.18f alpha:0.85f]);
     [back addTarget:self action:@selector(closeDetail:)
    forControlEvents:kControlEventTouchUpInside];
     [overlay addSubview:back];
@@ -2063,6 +2123,43 @@ static NSUInteger FindCommentPost(int *outCount)
 }
 #endif
 
+#ifdef TABSCHECK
+/* 自绘 tab 的命中自检：对每段中心做 hitTest，看返回的是不是 UIButton；
+   再对「关注」的命中视图派发 touchUpInside，确认能一路走到 feedChanged:。 */
+- (void)diagTabHit
+{
+    CGRect f = [sSegGroove frame];
+    CGFloat segW = CGRectGetWidth(f) / 3.0f;
+    int i;
+    NSArray *names = [NSArray arrayWithObjects:@"热门", @"关注", @"我的", nil];
+    id followHit = nil;
+
+    (void)f;
+    for (i = 0; i < 3; i++) {
+        /* hitTest 的点必须在 sTabHit 自己的坐标系里（左下为原点、相对父视图） */
+        CGPoint p = CGPointMake(segW * (CGFloat)i + segW / 2.0f,
+                                CGRectGetMidY([sTabHit bounds]));
+        id hit = [sTabHit hitTest:p withEvent:nil];
+        diag([[NSString stringWithFormat:@"TABSCHECK: seg%d(%@) hit=%@",
+               i, [names objectAtIndex:i],
+               (hit && [hit isKindOfClass:[UIButton class]]) ? @"UIButton" : @"MISS"]
+              UTF8String]);
+        if (i == 1) followHit = hit;
+    }
+
+    diag([[NSString stringWithFormat:@"TABSCHECK: before index=%d feed=%d",
+           sTabIndex, WeiboStoreFeed()] UTF8String]);
+    if (followHit) [followHit sendActionsForControlEvents:kControlEventTouchUpInside];
+    [self performSelector:@selector(diagTabAfter) withObject:nil afterDelay:1.2];
+}
+
+- (void)diagTabAfter
+{
+    diag([[NSString stringWithFormat:@"TABSCHECK: after index=%d feed=%d posts=%d",
+           sTabIndex, WeiboStoreFeed(), (int)(sPosts ? [sPosts count] : 0)] UTF8String]);
+}
+#endif
+
 #ifdef GALLERY
 /* 只读采集：依次截「主列表 / 正文+评论 / 账号详情」三张，供设计参考 */
 - (void)galleryShot:(NSString *)path
@@ -2178,7 +2275,7 @@ static NSUInteger FindCommentPost(int *outCount)
 {
     diag([[NSString stringWithFormat:@"LOGOUTCHECK: done logged=%d feed=%d seg=%d panel=%@ accountLabel=%@",
            WeiboStoreLoggedIn(), WeiboStoreFeed(),
-           sSegment ? (int)[sSegment selectedSegmentIndex] : -1,
+           sTabIndex,
            sAccountPanel ? @"YES" : @"NO",
            sAccountLabel && ![sAccountLabel isHidden] ? @"LOGIN" : @"AVATAR"] UTF8String]);
 }
@@ -2238,7 +2335,7 @@ static NSUInteger FindCommentPost(int *outCount)
 - (void)diagAutoSwitchFeed
 {
     diag("UI: auto switch segment to feed 1");
-    [sSegment setSelectedSegmentIndex:1];
+    SetTabIndex(1);
     [self feedChanged:nil];
 }
 
@@ -2267,7 +2364,7 @@ static NSUInteger FindCommentPost(int *outCount)
     NSInteger feed = (NSInteger)target;
     diag("UIEXTRA: switch feed target");
     if (feed < 0 || feed > 2) feed = 0;
-    [sSegment setSelectedSegmentIndex:feed];
+    SetTabIndex(feed);
     [self feedChanged:nil];
 }
 
@@ -2329,13 +2426,26 @@ static NSUInteger FindCommentPost(int *outCount)
 #endif
 #endif
 
+/* 三个 tab 的点击入口：先静默切换（移动浮块 + 换字色），再走原有 feedChanged:。
+   点已选中的 tab 与 UISegmentedControl 行为一致——不触发任何事件。 */
+- (void)switchTabIndex:(int)idx sender:(id)sender
+{
+    if (idx < 0 || idx > 2 || idx == sTabIndex) return;
+    SetTabIndex(idx);
+    [self feedChanged:sender];
+}
+
+- (void)tabHot:(id)sender    { [self switchTabIndex:0 sender:sender]; }
+- (void)tabFollow:(id)sender { [self switchTabIndex:1 sender:sender]; }
+- (void)tabMine:(id)sender   { [self switchTabIndex:2 sender:sender]; }
+
 - (void)feedChanged:(id)sender
 {
-    int idx = (int)[sSegment selectedSegmentIndex];
+    int idx = sTabIndex;
     (void)sender;
     if (idx > 0 && !WeiboStoreLoggedIn()) {
         /* 关注 / 我的 都需要登录：直接在 app 内弹扫码登录层 */
-        [sSegment setSelectedSegmentIndex:0];
+        SetTabIndex(0);
         layoutSegmentBlock();   /* 选中被重置回热门，浮块跟着回去 */
         [sStatusLabel setText:@"点左上角「登录」扫码后即可看关注流"];
         [sStatusLabel setHidden:NO];
@@ -2397,7 +2507,7 @@ static void LoginStateChanged(int state, UIImage *qrcode, NSString *message)
         WeiboStoreReloadLogin();
         if (sSelf) [(RootViewController *)sSelf refreshAccountArea];
         WeiboStoreFetchProfile();
-        if (sSegment) [sSegment setSelectedSegmentIndex:1];
+        if (sSegGroove) SetTabIndex(1);
         layoutSegmentBlock();   /* 登录成功跳关注：浮块同步 */
         WeiboStoreSwitchFeed(1);
         return;
@@ -2693,26 +2803,32 @@ static void LoginStateChanged(int state, UIImage *qrcode, NSString *message)
     /* 数字/性别/简介 */
     [self fillAccountPanel];
 
-    /* 返回按钮：蓝条内水平居中，白色文字（与主界面导航条控件同一水平线） */
+    /* 返回按钮：蓝条内水平居中，立体胶囊（与正文页返回同一款，宽度更宽） */
     UIButton *backBtn = [UIButton buttonWithType:kButtonTypeRounded];
     [backBtn setFrame:CGRectMake((pw - 80.0f) / 2.0f, 13.0f, 80.0f, 26.0f)];
     [backBtn setTitle:@"‹ 返回" forState:kControlStateNormal];
     [backBtn setTitleColor:[UIColor whiteColor] forState:kControlStateNormal];
+    [backBtn setTitleColor:[UIColor colorWithRed:0.86f green:0.92f blue:0.99f alpha:1.0f]
+                   forState:kControlStateHighlighted];
     [[backBtn titleLabel] setFont:[UIFont boldSystemFontOfSize:15.0f]];
+    StylePillButton(backBtn, @"BtnNavy", @"BtnNavyDown", 11.0f,
+                    [UIColor colorWithRed:0.02f green:0.09f blue:0.18f alpha:0.85f]);
     [backBtn addTarget:self action:@selector(closeAccount:)
       forControlEvents:kControlEventTouchUpInside];
     [sAccountPanel addSubview:backBtn];
 
-    /* 退出登录按钮：面板右下角，红色圆角警示款 */
+    /* 退出登录：红色立体胶囊（警示色但同样有高光/描边/投影，风格不跳） */
     UIButton *logoutBtn = [UIButton buttonWithType:kButtonTypeRounded];
     [logoutBtn setFrame:CGRectMake(pw - 108.0f, h - 56.0f, 92.0f, 36.0f)];
     [logoutBtn setTitle:@"退出登录" forState:kControlStateNormal];
     [logoutBtn setTitleColor:[UIColor whiteColor] forState:kControlStateNormal];
-    [logoutBtn setBackgroundColor:[UIColor colorWithRed:0.78f green:0.20f blue:0.20f alpha:1.0f]];
-    RoundView(logoutBtn, 8.0f);
+    [logoutBtn setTitleColor:[UIColor colorWithRed:0.99f green:0.88f blue:0.86f alpha:1.0f]
+                     forState:kControlStateHighlighted];
     [[logoutBtn titleLabel] setFont:[UIFont boldSystemFontOfSize:14.0f]];
+    StylePillButton(logoutBtn, @"BtnRed", @"BtnRedDown", 13.0f,
+                    [UIColor colorWithRed:0.22f green:0.02f blue:0.02f alpha:0.8f]);
     [logoutBtn addTarget:self action:@selector(logoutTapped:)
-      forControlEvents:kControlEventTouchUpInside];
+        forControlEvents:kControlEventTouchUpInside];
     [sAccountPanel addSubview:logoutBtn];
 
     [[self view] addSubview:sAccountPanel];
@@ -2734,7 +2850,7 @@ static void LoginStateChanged(int state, UIImage *qrcode, NSString *message)
     (void)sender;
     WeiboStoreLogout();                    /* 清凭据 + 持久化标记 + 清空三个 tab 数据 */
 
-    if (sSegment) [sSegment setSelectedSegmentIndex:0];
+    if (sSegGroove) SetTabIndex(0);
     layoutSegmentBlock();                 /* 退出回热门：浮块同步 */
     [self refreshAccountArea];            /* 头像 → 登录按钮 */
 
@@ -2759,7 +2875,7 @@ static void LoginStateChanged(int state, UIImage *qrcode, NSString *message)
 #ifdef LOGOUTCHECK
     diag([[NSString stringWithFormat:@"LOGOUTCHECK: feed=%d logged=%d seg=%d panel=%@",
           WeiboStoreFeed(), WeiboStoreLoggedIn(),
-          sSegment ? (int)[sSegment selectedSegmentIndex] : -1,
+          sTabIndex,
           sAccountPanel ? @"YES" : @"NO"] UTF8String]);
 #endif
 }

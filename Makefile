@@ -119,6 +119,9 @@ endif
 ifeq ($(GALLERY),1)
 CFLAGS += -DGALLERY=1
 endif
+ifeq ($(TABSCHECK),1)
+CFLAGS += -DTABSCHECK=1
+endif
 endif
 
 # 直接调用 ld64，由 LC_UNIXTHREAD 交给 dyld 启动 main()。

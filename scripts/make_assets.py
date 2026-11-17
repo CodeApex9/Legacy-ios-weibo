@@ -394,6 +394,47 @@ def stitch_px(x, y, w, h, axis, scale=1):
     return (0, 0, 0, 0)
 
 
+# ---- 拟物立体按钮 ---------------------------------------------------------
+# 深蓝（导航条上的「返回」）/ 红色（「退出登录」）：圆角胶囊 + 竖直渐变
+# + 上半部玻璃高光 + 1pt 深色描边 + 底边暗线。四角透明，运行时配 CALayer 投影，
+# 这样阴影会沿胶囊轮廓走（不需要 masksToBounds，也不会被方框切掉）。
+BTN_NAVY = [(0.00, (118, 163, 216)), (0.13, (82, 128, 186)),
+            (0.55, (55, 99, 155)), (1.00, (29, 61, 105))]
+# 按下态：保持同一渐变方向、整体压暗一档，并去掉玻璃高光（由 gloss=0 控制）。
+# 若反过来做成「上暗下亮」会看起来像描边空心胶囊，不像按下去。
+BTN_NAVY_DOWN = [(0.00, (85, 117, 156)), (0.13, (59, 92, 134)),
+                 (0.55, (40, 71, 112)), (1.00, (21, 44, 76))]
+BTN_RED = [(0.00, (238, 148, 139)), (0.13, (209, 96, 88)),
+           (0.55, (177, 59, 51)), (1.00, (127, 29, 24))]
+BTN_RED_DOWN = [(0.00, (171, 107, 100)), (0.13, (150, 69, 63)),
+                (0.55, (127, 42, 37)), (1.00, (91, 21, 17))]
+
+
+def btn_px(x, y, w, h, stops, radius, gloss=True, scale=1):
+    """立体胶囊按钮。返回 RGBA：圆角外透明，边缘 1px 反锯齿。"""
+    r = float(radius * scale)
+    cx = min(max(x + 0.5, r), w - r)
+    cy = min(max(y + 0.5, r), h - r)
+    dx, dy = x + 0.5 - cx, y + 0.5 - cy
+    d = (dx * dx + dy * dy) ** 0.5
+    if d > r + 0.5:
+        return (0, 0, 0, 0)
+    alpha = 255 if d <= r - 0.5 else int(255 * (r + 0.5 - d))
+    t = y / float(max(h - 1, 1))
+    c = list(_seg_grad(stops, t))
+    edge = 1 * scale
+    if d > r - edge:                       # 外描边
+        c = [max(0, v - 52) for v in c]
+    elif y <= edge:                        # 顶边：常态提亮（受光），按下压暗（凹陷）
+        c = [min(255, v + 42) if gloss else max(0, v - 20) for v in c]
+    elif y >= h - 1 - edge:                # 底边暗线
+        c = [max(0, v - 28) for v in c]
+    elif gloss and t < 0.46:               # 玻璃高光：上半部提亮，向下衰减
+        k = (0.46 - t) / 0.46 * 32.0
+        c = [min(255, v + k) for v in c]
+    return (int(c[0]), int(c[1]), int(c[2]), alpha)
+
+
 def linen_px(x, y, w, h, scale=1):
     """亚麻背景平铺贴图：8pt 一个循环，经纬线各 1pt。
 
@@ -424,6 +465,21 @@ def main():
                            ("NavBar@2x.png", 640, NAV_PT * 2, 2)]:
         write_png_pixels(os.path.join(out, name), w, h,
                          lambda x, y, ww, hh, s=sc: nav_px(x, y, ww, hh, s))
+
+    # 立体按钮：深蓝 60x26（可横向拉伸到 80pt 返回键）、红色 92x36（退出登录）
+    for name, w, h, stops, rad, gl, sc in [
+        ("BtnNavy.png", 60, 26, BTN_NAVY, 7, 1, 1),
+        ("BtnNavy@2x.png", 120, 52, BTN_NAVY, 7, 1, 2),
+        ("BtnNavyDown.png", 60, 26, BTN_NAVY_DOWN, 7, 0, 1),
+        ("BtnNavyDown@2x.png", 120, 52, BTN_NAVY_DOWN, 7, 0, 2),
+        ("BtnRed.png", 92, 36, BTN_RED, 9, 1, 1),
+        ("BtnRed@2x.png", 184, 72, BTN_RED, 9, 1, 2),
+        ("BtnRedDown.png", 92, 36, BTN_RED_DOWN, 9, 0, 1),
+        ("BtnRedDown@2x.png", 184, 72, BTN_RED_DOWN, 9, 0, 2),
+    ]:
+        write_png_pixels_rgba(os.path.join(out, name), w, h,
+                              lambda x, y, ww, hh, st=stops, rd=rad, g=gl, s2=sc:
+                              btn_px(x, y, ww, hh, st, rd, g, s2))
 
     # 亚麻背景平铺贴图：8x8pt 一个循环（@2x 16x16px）
     for name, w, h, sc in [("Linen.png", 8, 8, 1), ("Linen@2x.png", 16, 16, 2)]:
