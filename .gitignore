@@ -1,0 +1,13 @@
+# 微博登录凭据：扫码登录后生成，含 SUB/SUBP，等同账号密码，绝不入库
+Resources/Login.txt
+build/Payload/LegacyApp.app/Login.txt
+build/weibo_login_qr.png
+
+# 构建产物与真机诊断输出
+build/
+Resources/*.png
+
+# 截图与备份不入库（体积大、可重生成）
+screenshots/
+.DS_Store
+__pycache__/
