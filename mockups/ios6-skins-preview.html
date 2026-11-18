@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>iOS 6 三套系统皮肤 · 可行性预览</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+         background: #eceae6; color: #2c2a28; padding: 34px 40px 60px; }
+  .head { max-width: 1360px; margin: 0 auto 24px; }
+  .head h1 { font-size: 22px; font-weight: 700; }
+  .head p { margin-top: 8px; font-size: 13px; color: #6d6862; line-height: 1.8; }
+  .tag { display: inline-block; margin-top: 10px; padding: 4px 11px; border-radius: 10px;
+         background: #e2ded5; color: #6a5f4d; font-size: 12px; }
+  .yes { color: #1d7a4d; font-weight: 700; }
+  .grid { max-width: 1360px; margin: 0 auto; display: grid;
+          grid-template-columns: repeat(3, 400px); gap: 26px; justify-content: center; }
+  .col { background:#fff; border:1px solid #e2ded7; border-radius:14px; padding:16px; }
+  .col h2 { font-size:15px; font-weight:700; margin-bottom:3px; }
+  .col .sub { font-size:11px; color:#8a857e; margin-bottom:12px; }
+
+  /* 手机 */
+  .phone { width:320px; height:568px; border-radius:22px; overflow:hidden;
+           box-shadow:0 8px 22px rgba(0,0,0,.2); position:relative; }
+  .status { height:20px; display:flex; align-items:center; justify-content:space-between;
+            padding:0 8px; font-size:10px; font-weight:600; }
+  .status .icons { letter-spacing:2px; }
+  .nav { height:44px; display:flex; align-items:center; justify-content:center;
+         position:relative; font-size:15px; font-weight:600; }
+  .nav .btn { position:absolute; top:7px; width:36px; height:30px; border-radius:5px;
+              display:flex; align-items:center; justify-content:center; }
+  .nav .btn.l { left:6px; } .nav .btn.r { right:6px; }
+
+  /* ---------- 提醒事项 ---------- */
+  .rem .status { background:#2b2b2b; color:#fff; }
+  .rem .nav { background:linear-gradient(180deg,#4a4a4a,#2e2e2e 45%,#1e1e1e);
+              color:#f2f2f2; text-shadow:0 -1px 1px #000;
+              border-bottom:1px solid #111; }
+  .rem .nav .btn { background:linear-gradient(180deg,#4a4a4a,#242424);
+                   border:1px solid #151515; box-shadow:inset 0 1px 0 rgba(255,255,255,.18); }
+  .rem .nav .btn i { display:block; width:18px; height:2px; background:#ddd; box-shadow:0 5px 0 #ddd,0 10px 0 #ddd; }
+  .rem .body { height:504px; padding:14px 12px;
+               background-color:#f7f5ef;
+               background-image:radial-gradient(circle,#d8d4c8 0.6px,transparent 0.7px);
+               background-size:22px 22px; position:relative; overflow:hidden; }
+  .rem .body::before { content:""; position:absolute; left:22px; top:0; bottom:0;
+                       width:1px; background:#e8a6ae; }
+  .rem h3 { color:#b23b4e; font-size:27px; font-weight:400; margin:0 0 8px 8px; }
+  .rem .plus { position:absolute; right:12px; top:14px; width:34px; height:30px;
+               border-radius:5px; background:linear-gradient(180deg,#fff,#e4e0d7);
+               border:1px solid #c9c5bb; color:#a9a49b; font-size:22px; text-align:center; line-height:26px; }
+  .rem .row { display:flex; align-items:flex-start; gap:8px; padding:9px 2px 9px 12px;
+              border-bottom:1px dotted #c9c5bb; }
+  .rem .dot { width:13px; height:13px; border-radius:50%; border:1.5px solid #c8a6a6; flex:none; margin-top:3px; }
+  .rem .row .txt { font-size:12.5px; color:#333; line-height:1.45; }
+  .rem .row .txt small { display:block; color:#9a968e; font-size:10px; margin-top:2px; }
+  .rem .row.done .dot { background:#c8a6a6; box-shadow:inset 0 0 0 3px #f7f5ef; }
+
+  /* ---------- 备忘录 ---------- */
+  .notes .status { background:#3b2a1e; color:#fff; }
+  .notes .nav { background:linear-gradient(180deg,#7a4f33,#4e2f1e 55%,#382114);
+                color:#fff; text-shadow:0 -1px 1px #2a160b; border-bottom:1px solid #2a160b; }
+  .notes .nav .btn { background:linear-gradient(180deg,#8a5c3d,#3d2415);
+                     border:1px solid #2a160b; box-shadow:inset 0 1px 0 rgba(255,240,210,.25);
+                     color:#fff; font-size:20px; }
+  .notes .body { height:504px; padding:16px 14px; position:relative; overflow:hidden;
+                 background-color:#fdf6b8;
+                 background-image:repeating-linear-gradient(180deg,transparent 0,transparent 27px,#b9b495 28px,#b9b495 29px),
+                                  radial-gradient(circle,#e8df95 0.5px,transparent 0.6px);
+                 background-size:100% 29px, 4px 4px; }
+  .notes .center { text-align:center; color:#a4552f; font-size:16px; margin-top:70px; }
+  .notes .entry { padding:7px 2px; border-bottom:1px solid rgba(150,140,105,.5); }
+  .notes .entry b { color:#8b4a29; font-size:13px; font-weight:600; }
+  .notes .entry p { color:#4a3a22; font-size:11.5px; line-height:1.5; margin-top:3px;
+                    font-family:"PingFang SC",sans-serif; }
+  .notes .entry .meta { color:#9a8452; font-size:10px; margin-top:3px; }
+
+  /* ---------- Game Center ---------- */
+  .gc .status { background:#3a2115; color:#fff; }
+  .gc .nav { background:linear-gradient(180deg,#9a5a2e,#6d3c1e 50%,#4a2813);
+             color:#fff; text-shadow:0 -1px 1px #2a1509; border-bottom:2px solid #36200f; }
+  .gc .body { height:436px; position:relative; overflow:hidden;
+              background-color:#2e8156;
+              background-image:radial-gradient(circle at 30% 20%,rgba(255,255,255,.06),transparent 60%),
+                               radial-gradient(circle,#000 0.5px,transparent 0.6px);
+              background-size:100% 100%, 3px 3px; }
+  .gc .badge { width:92px; height:100px; margin:56px auto 0; position:relative;
+               background:#276949; clip-path:polygon(50% 0,100% 25%,100% 75%,50% 100%,0 75%,0 25%);
+               box-shadow:inset 0 0 0 2px rgba(255,255,255,.06);
+               display:flex; align-items:center; justify-content:center; flex-wrap:wrap;
+               padding:22px 18px; gap:5px; }
+  .gc .badge i { width:9px; height:13px; border-radius:50%; background:#1d563b; display:block; }
+  .gc .loading { text-align:center; color:#e8f4ec; font-size:14px; margin-top:16px; text-shadow:0 1px 1px #1b4e34; }
+  .gc .loading span { display:inline-block; animation:spin 1.2s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .gc .tabbar { height:68px; display:flex; background:linear-gradient(180deg,#9c6034,#5c3319);
+                border-top:2px solid #3c2110; }
+  .gc .tab { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+             gap:3px; color:#f0d9b8; font-size:10px; text-shadow:0 -1px 1px #3c2110; }
+  .gc .tab .ico { width:22px; height:18px; background:#e8b877; border-radius:3px; opacity:.85; }
+  .gc .tab.on { background:linear-gradient(180deg,#c98b4e,#8a5328);
+                border-left:1px solid #e0a866; border-right:1px solid #4a2a12; }
+
+  .note { max-width:1360px; margin:22px auto 0; background:#fff; border:1px solid #e2ded7;
+          border-radius:12px; padding:16px 20px; font-size:12px; color:#6d6862; line-height:1.85; }
+  .note b { color:#24476f; }
+  .note .grid2 { display:grid; grid-template-columns:repeat(3,1fr); gap:18px; margin-top:8px; }
+  .yeslist { max-width:1360px; margin:18px auto 0; font-size:12px; color:#5d5954; line-height:1.9; }
+  .yeslist li { margin-left:18px; }
+  .warn { color:#a4552f; }
+</style>
+</head>
+<body>
+<div class="head">
+  <h1>iOS 6 系统应用三套皮肤 · 可行性预览</h1>
+  <p>把你相册里三张 iOS 6 原生应用的截图（提醒事项 / 备忘录 / Game Center）风格套到当前微博客户端上。<b class="yes">结论：三套都能实现</b>——皮肤全是 <code>make_assets.py</code> 程序化生成的 PNG + 少量布局代码，拉丝金属、信纸、毛毡、木纹都能用同样方式画出来，不需要新的系统能力。下面是把当前微博列表套进三套皮肤的效果图（仅预览，未改代码）。</p>
+  <span class="tag">效果图 · 未动代码 · 参考截图来自 iPhone 相册</span>
+</div>
+
+<div class="grid">
+  <!-- 提醒事项 -->
+  <div class="col">
+    <h2>① 提醒事项皮肤</h2><div class="sub">拉丝金属 · 点格纸 · 红色清单</div>
+    <div class="phone rem">
+      <div class="status"><span> airplane wifi</span><span>19:26</span><span class="icons">61%</span></div>
+      <div class="nav"><span class="btn l"><i></i></span>特别关注<span class="btn r">+</span></div>
+      <div class="body">
+        <div class="plus">+</div>
+        <h3>特别关注</h3>
+        <div class="row"><span class="dot"></span><span class="txt">陈震同学：没用的知识又增加了…<small>今天 19:02 · 21 条新微博</small></span></div>
+        <div class="row"><span class="dot"></span><span class="txt">微博小秘书：你关注的博主发布了新内容<small>今天 18:40</small></span></div>
+        <div class="row done"><span class="dot"></span><span class="txt">人民日报：今日要闻汇总<small>今天 17:15 · 已读</small></span></div>
+        <div class="row"><span class="dot"></span><span class="txt">科技每日：新机发布会看点<small>今天 16:50</small></span></div>
+        <div class="row"><span class="dot"></span><span class="txt">摄影教程：人像构图技巧<small>今天 15:30</small></span></div>
+      </div>
+    </div>
+    <div class="note" style="margin-top:12px">导航栏深灰拉丝金属、左三横线菜单钮；米白点格纸 + 左侧红竖线；微博变成带勾选圆的待办行，点格线做分隔。<b>改动量中等</b>。</div>
+  </div>
+
+  <!-- 备忘录 -->
+  <div class="col">
+    <h2>② 备忘录皮肤</h2><div class="sub">棕皮革 · 淡黄信纸 · 手写感</div>
+    <div class="phone notes">
+      <div class="status"><span> airplane wifi</span><span>19:26</span><span class="icons">61%</span></div>
+      <div class="nav"><span class="btn r">+</span>热门</div>
+      <div class="body">
+        <div class="entry"><b>@ 微博热搜</b><p>今天最热的话题都在这里，点击查看详情与讨论…</p><div class="meta">转发 128 · 评论 96 · 19:20</div></div>
+        <div class="entry"><b>@ 新华社</b><p>最新消息：多地迎来今年首场强降雨天气…</p><div class="meta">转发 542 · 评论 310 · 19:12</div></div>
+        <div class="entry"><b>@ 搞笑视频</b><p>这只猫的操作把网友都逗笑了哈哈哈</p><div class="meta">转发 2103 · 评论 877 · 19:05</div></div>
+        <div class="entry"><b>@ 数码前线</b><p>新系统更新后，这些隐藏功能你知道吗？</p><div class="meta">转发 764 · 评论 233 · 18:58</div></div>
+      </div>
+    </div>
+    <div class="note" style="margin-top:12px">导航栏棕褐皮革、右上 + 钮；淡黄横线信纸 + 细噪点；微博变成信纸上的一段段手记，红棕色用户名。改动主要在背景平铺与卡片重绘。</div>
+  </div>
+
+  <!-- Game Center -->
+  <div class="col">
+    <h2>③ Game Center 皮肤</h2><div class="sub">木纹 · 绿毛毡 · 底部标签栏</div>
+    <div class="phone gc">
+      <div class="status"><span> airplane wifi</span><span>19:26</span><span class="icons">61%</span></div>
+      <div class="nav">游戏</div>
+      <div class="body">
+        <div class="badge"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="loading"><span>✦</span> 特别关注</div>
+      </div>
+      <div class="tabbar">
+        <div class="tab"><span class="ico"></span>热门</div>
+        <div class="tab"><span class="ico"></span>关注</div>
+        <div class="tab on"><span class="ico"></span>我的</div>
+        <div class="tab"><span class="ico"></span>特别</div>
+      </div>
+    </div>
+    <div class="note" style="margin-top:12px">导航栏棕木纹、绿色毛毡桌布 + 浮雕骰子/徽章、底部木质标签栏。<b class="warn">注意</b>：这会把右上汉堡菜单改成底部标签栏，属于交互布局变更，不只是换皮。</div>
+  </div>
+</div>
+
+<div class="note">
+  <b>实现可行性逐项对照：</b>
+  <div class="grid2">
+    <div><b>提醒事项：</b>拉丝金属导航条（程序化横纹）、点格纸平铺（radial 点阵）、红竖线、红色标题、勾选圆点 —— 全部可用 PNG + 绘制实现，可行。</div>
+    <div><b>备忘录：</b>棕皮革导航条（已有皮革生成器改色）、淡黄信纸横线平铺、细噪点、红棕标题 —— 可行，改动最小。</div>
+    <div><b>Game Center：</b>木纹导航条、绿毛毡噪点、浮雕骰子、底部标签栏 —— 纹理可行；底部标签栏要把菜单从右上挪到底部，可行但是布局改动。</div>
+  </div>
+</div>
+
+<div class="yeslist">
+  <b>需要你确认的两点：</b>
+  <ul>
+    <li>三套皮肤是<b>做成运行时可切换</b>（设置里选主题、重启生效），还是做成<b>三套编译开关</b>（每次只编一套，像现在的自检开关）？前者体验好、工作量略大。</li>
+    <li>Game Center 的底部标签栏：是<b>照搬到底部</b>（认了布局改动），还是<b>保留右上汉堡菜单</b>、只换木纹+毛毡+浮雕质感？</li>
+  </ul>
+  确认后再动手实现。
+</div>
+
+</body>
+</html>

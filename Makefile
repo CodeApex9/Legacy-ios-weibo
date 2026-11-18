@@ -59,11 +59,12 @@ APP   := $(BUILD)/Payload/LegacyApp.app
 EXEC  := $(APP)/LegacyApp
 OBJS  := $(BUILD)/main.o $(BUILD)/AppDelegate.o $(BUILD)/RootViewController.o \
          $(BUILD)/WeiboStore.o $(BUILD)/ImageLoader.o $(BUILD)/WeiboLogin.o \
-         $(BUILD)/WeiboComments.o
+         $(BUILD)/WeiboComments.o $(BUILD)/Skin.o
 # 头文件改动必须触发全量重编，否则 DIAG 与非 DIAG 的 .o 会混进同一个二进制
 HEADERS := include/mini/LegacyKit.h include/full/LegacyKit.h \
            src/AppDelegate.h src/RootViewController.h src/WeiboStore.h \
-           src/ImageLoader.h src/WeiboLogin.h src/WeiboComments.h src/Diag.h
+           src/ImageLoader.h src/WeiboLogin.h src/WeiboComments.h src/Diag.h \
+           src/Skin.h
 # 真机联网自检模块只在 DIAG=1 时编译，不给正常交付版增加任何符号与体积
 ifeq ($(DIAG),1)
 OBJS += $(BUILD)/NetProbe.o
@@ -122,6 +123,22 @@ endif
 ifeq ($(TABSCHECK),1)
 CFLAGS += -DTABSCHECK=1
 endif
+ifeq ($(SPECIALCHECK),1)
+CFLAGS += -DSPECIALCHECK=1
+endif
+ifeq ($(SPECIALSHOT),1)
+CFLAGS += -DSPECIALSHOT=1
+endif
+ifeq ($(MENUCHECK),1)
+CFLAGS += -DMENUCHECK=1
+endif
+ifeq ($(SPECIALPROBE),1)
+CFLAGS += -DSPECIALPROBE=1
+OBJS += $(BUILD)/SpecialProbe.o
+endif
+ifeq ($(SKINCHECK),1)
+CFLAGS += -DSKINCHECK=1
+endif
 endif
 
 # 直接调用 ld64，由 LC_UNIXTHREAD 交给 dyld 启动 main()。
@@ -140,7 +157,25 @@ LDLIBS := -L$(STUB_ROOT)/usr/lib -F$(STUB_ROOT)/System/Library/Frameworks \
 
 all: app
 
-$(BUILD)/%.o: src/%.m $(HEADERS)
+# 编译开关指纹：DIAG / UIPROBE / GALLERY 等任意一项变化都必须全量重编。
+# 否则先 make DIAG=1 再 make 会留下引用了 NetProbe 符号的旧 .o，链接期报
+# "Undefined symbols: _LegacyNetProbe"。
+# 不能依赖 .cflags 的 mtime 触发重编：clean -> make -> make DIAG=1 在同一秒
+# 内跑完时 mtime 同秒，make 会误判 .o 仍是新的（2026-11-17 真踩过：DIAG 版
+# 二进制混进 release 的 RootViewController.o，自检全静默）。也不能放 parse 期
+# $(shell)（make 3.81 下 DIAG 构建后 make clean 会报 missing separator）。
+# 所以改成构建期规则：指纹变化时直接删除全部旧 .o，强制全量重编。
+FLAGS_STAMP := $(BUILD)/.cflags
+
+.PHONY: FORCE
+FORCE:
+
+$(FLAGS_STAMP): FORCE
+	@mkdir -p $(BUILD)
+	@printf '%s' '$(CFLAGS)' > $@.tmp
+	@if cmp -s $@.tmp $@; then rm -f $@.tmp; else mv $@.tmp $@; find $(BUILD) -maxdepth 1 -name '*.o' -delete; fi
+
+$(BUILD)/%.o: src/%.m $(HEADERS) $(FLAGS_STAMP)
 	@mkdir -p $(BUILD)
 	clang $(CFLAGS) -c $< -o $@
 

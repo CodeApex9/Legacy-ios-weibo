@@ -6,6 +6,10 @@
 /* 见 NetProbe.m：真机 NSURLConnection 联网自检，只在 DIAG=1 时编译进二进制 */
 void LegacyNetProbe(void);
 #endif
+#ifdef SPECIALPROBE
+/* 见 SpecialProbe.m：「特别关注」数据源探针，仅 DIAG=1 SPECIALPROBE=1 */
+void WeiboSpecialProbe(void);
+#endif
 
 /*
  * 刻意不使用 ObjC 实例变量：本二进制跳过 crt1.o、由 ld64 手工链接，
@@ -49,6 +53,20 @@ static UIWindow *sWindow = nil;
        UIPROBE=1 的界面自检构建跳过它，避免阻塞主线程打乱下拉/动画时序。 */
     LegacyNetProbe();
 #endif
+#ifdef SPECIALPROBE
+    WeiboSpecialProbe();
+#endif
+}
+
+/* 运行时换肤：换掉 rootViewController，让所有界面的 imageNamed: 重新按
+   新皮肤取名。旧 VC 的 view 随之释放，静态指针在 loadView 里重建。 */
++ (void)rebuildRoot
+{
+    if (!sWindow) return;
+    RootViewController *fresh = [[RootViewController alloc] init];
+    [sWindow setRootViewController:fresh];
+    [sWindow makeKeyAndVisible];
+    [fresh release];
 }
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)launchOptions

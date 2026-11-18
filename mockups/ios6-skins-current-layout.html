@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>三套 iOS6 皮肤 · 按当前 App 布局模拟</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+         background: #eceae6; color: #2c2a28; padding: 30px 36px 56px; }
+  .head { max-width: 1330px; margin: 0 auto 22px; }
+  .head h1 { font-size: 21px; font-weight: 700; }
+  .head p { margin-top: 8px; font-size: 12.5px; color: #6d6862; line-height: 1.85; }
+  .tag { display: inline-block; margin-top: 9px; padding: 4px 11px; border-radius: 10px;
+         background: #e2ded5; color: #6a5f4d; font-size: 12px; }
+  .cols { max-width: 1330px; margin: 0 auto; display: grid;
+          grid-template-columns: repeat(3,1fr); gap: 22px; }
+  .col { background:#fff; border:1px solid #e2ded7; border-radius:12px; padding:14px; }
+  .col h2 { font-size:14px; font-weight:700; }
+  .col .sub { font-size:11px; color:#8a857e; margin:3px 0 11px; }
+  .shot { width:100%; border-radius:8px; display:block; border:1px solid #ddd; }
+  .scenes { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:8px; }
+  .scenes a { font-size:11px; color:#3c6ea5; text-decoration:none; text-align:center;
+              padding:5px 0; background:#f4f6f9; border-radius:6px; }
+  .desc { font-size:11.5px; color:#6d6862; line-height:1.75; margin-top:10px; }
+  .note { max-width:1330px; margin:20px auto 0; background:#fff; border:1px solid #e2ded7;
+          border-radius:12px; padding:15px 20px; font-size:12px; color:#6d6862; line-height:1.85; }
+  .note b { color:#24476f; }
+  .warn { color:#a4552f; }
+</style>
+</head>
+<body>
+<div class="head">
+  <h1>三套 iOS 6 系统皮肤 · 按当前 App 真实布局模拟</h1>
+  <p>这次直接用<b>当前 App 的最新真机截图</b>做底图（顶部单标题 + 汉堡菜单 + 微博卡片，正文页 / 账号面板同款布局），只把导航条、背景、卡片换成三套系统皮肤的配色和纹理。<b>布局、文字、头像、图片完全保持现状</b>，你能直接看出换肤后的实际观感。点下方小链接可看正文页和账号面板的效果。</p>
+  <span class="tag">纯预览 · 未改任何产品代码</span>
+</div>
+
+<div class="cols">
+  <div class="col">
+    <h2>① 提醒事项</h2>
+    <div class="sub">拉丝金属导航条 · 米白点格纸 · 红竖线</div>
+    <img class="shot" src="skins/reminders-list.png" alt="提醒事项皮肤主列表">
+    <div class="scenes"><a href="skins/reminders-detail.png" target="_blank">正文页</a><a href="skins/reminders-account.png" target="_blank">账号面板</a><a href="skins/reminders-list.png" target="_blank">看大图</a></div>
+    <div class="desc">导航条深灰横向拉丝 + 奶油缝线保留；微博区变成米白点格纸，左侧一道红竖线、卡片米白。文字头像全部原样保留，观感接近 iOS 6 提醒事项的清单纸。</div>
+  </div>
+  <div class="col">
+    <h2>② 备忘录</h2>
+    <div class="sub">棕皮革导航条 · 淡黄横线信纸</div>
+    <img class="shot" src="skins/notes-list.png" alt="备忘录皮肤主列表">
+    <div class="scenes"><a href="skins/notes-detail.png" target="_blank">正文页</a><a href="skins/notes-account.png" target="_blank">账号面板</a><a href="skins/notes-list.png" target="_blank">看大图</a></div>
+    <div class="desc">导航条换棕褐皮革、卡片变成淡黄信纸、背景横线贯穿，像一页页手写便签。三套里改动最小，和现有拟物皮肤最容易融合。</div>
+  </div>
+  <div class="col">
+    <h2>③ Game Center</h2>
+    <div class="sub">木纹导航条 · 绿毛毡 · 浅木牌卡片</div>
+    <img class="shot" src="skins/gamecenter-list.png" alt="Game Center皮肤主列表">
+    <div class="scenes"><a href="skins/gamecenter-detail.png" target="_blank">正文页</a><a href="skins/gamecenter-account.png" target="_blank">账号面板</a><a href="skins/gamecenter-list.png" target="_blank">看大图</a></div>
+    <div class="desc">导航条棕木纹 + 缝线，背景绿毛毡桌布，微博卡片做成毛毡上的浅木牌，保留深色文字可读。观感接近 Game Center 的游戏桌布。当前布局的汉堡菜单保持原位，未动交互。</div>
+  </div>
+</div>
+
+<div class="note">
+  <b>说明：</b>这些图是用真机最新截图逐像素换色生成的（脚本在 <code>mockups/render_skins.py</code>），只替换了导航条/背景/卡片三类皮肤色，其余像素（文字、头像、图片、按钮、缝线）原样保留，因此布局和你现在看到的 App 完全一致。<br>
+  <span class="warn">预览瑕疵：</span>逐像素换色会在头像边缘、卡片圆角处留下极少量误染色（绿点/白边），这是预览脚本的局限；真正实现时是重新生成底图和卡片位图，不会有这些痕迹。<br>
+  <b>实现结论不变：</b>三套都能做，且都能保持当前布局。若确认要做，请告诉我：① 运行时切换还是编译开关？② Game Center 是否要照搬底部标签栏（那会改布局）？
+</div>
+
+</body>
+</html>

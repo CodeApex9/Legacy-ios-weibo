@@ -6,6 +6,7 @@
 
 用法: python3 scripts/make_assets.py <输出目录>
 """
+import math
 import os
 import struct
 import sys
@@ -28,13 +29,6 @@ NAV_STOPS = [
 # ---- V0.3 皮革导航条 ------------------------------------------------------
 # 深海军蓝皮革：比原蓝色渐变沉一档，配内嵌虚线缝线。
 # 纹理由低频揉纹 + 高频颗粒两层确定性噪声叠成，纯标准库生成，不需要外部贴图。
-LEATHER_STOPS = [
-    (0.00, (66, 100, 145)),
-    (0.16, (50, 81, 120)),
-    (0.62, (39, 66, 100)),
-    (1.00, (27, 49, 79)),
-]
-STITCH_COLOR = (152, 181, 214)
 STITCH_INSET = 4          # 缝线距边缘 4pt
 STITCH_DASH = 3           # 3 实 3 虚
 
@@ -159,36 +153,54 @@ def _clamp(v):
     return 0 if v < 0 else (255 if v > 255 else int(v))
 
 
+NAV_LEATHER_STOPS = [
+    # 围绕菜单面板底色 (23,39,58) 的轻微纵向明暗：顶部略提亮、底部压暗，
+    # 保持立体感的同时和 MenuLeather 是同一配色。
+    (0.00, (30, 50, 72)),
+    (0.35, (23, 39, 58)),
+    (1.00, (16, 29, 45)),
+]
+NAV_STITCH = (188, 176, 148)   # 与菜单/纸卡同一根奶油缝线（原为偏蓝 152,181,214）
+
+
 def nav_px(x, y, w, h, scale=1):
-    """V0.3 皮革导航条：深海军蓝皮革 + 顶部高光 + 底部暗边 + 内嵌虚线缝线。"""
+    """V0.3 皮革导航条：与汉堡菜单面板同款深蓝皮革 + 奶油缝线（统一配色）。
+    底色 = MenuLeather 同源的深蓝微噪 + 轻微纵向明暗；保留 1pt 顶部高光
+    与底部暗边维持立体感，缝线几何（inset 4 / 3实3虚）不变。"""
     t = y / float(max(h - 1, 1))
-    base = _seg_grad(LEATHER_STOPS, t)
-    d = _leather_delta(x, y, scale) * 12.0
-    r, g, b = base[0] + d, base[1] + d, base[2] + d * 1.05
+    base = _seg_grad(NAV_LEATHER_STOPS, t)
+    # 菜单同款确定性微噪：颗粒幅度一致，两张图放在一起才像同一块皮
+    u = x // scale
+    v = y // scale
+    d = ((u * 11 + v * 7) % 5) - 2
+    d2 = ((u * 3 + v * 17) % 3) - 1
+    r = base[0] + d * 2 + d2
+    g = base[1] + d * 2 + d2
+    b = base[2] + d * 2 + d2
 
     if y == 0:                       # 顶部 1pt 高光
-        r, g, b = r + 34, g + 32, b + 26
+        r, g, b = r + 30, g + 28, b + 24
     if y == h - 1:                   # 底部暗边
-        r, g, b = r - 20, g - 20, b - 18
+        r, g, b = r - 16, g - 16, b - 14
     elif y == h - 2:
-        r, g, b = r - 9, g - 9, b - 8
+        r, g, b = r - 8, g - 8, b - 7
 
     inset = STITCH_INSET * scale
     dash = STITCH_DASH * scale
     on_h = (y == inset or y == h - 1 - inset) and inset <= x <= w - 1 - inset
     on_v = (x == inset or x == w - 1 - inset) and inset <= y <= h - 1 - inset
     if on_h and ((x - inset) // dash) % 2 == 0:
-        r, g, b = STITCH_COLOR
+        r, g, b = NAV_STITCH
     elif on_v and ((y - inset) // dash) % 2 == 0:
-        r, g, b = STITCH_COLOR
+        r, g, b = NAV_STITCH
 
     return (_clamp(r), _clamp(g), _clamp(b))
 
 
 def launch_row(y, h, scale):
-    """启动图：顶部 NAV_PT 与导航条皮革同色（避免启动瞬间蓝→皮革的跳变）。"""
+    """启动图：顶部 NAV_PT 与导航条皮革同色（避免启动瞬间深蓝→皮革的跳变）。"""
     if y < NAV_PT * scale:
-        return _seg_grad(LEATHER_STOPS, y / float(max(NAV_PT * scale - 1, 1)))
+        return _seg_grad(NAV_LEATHER_STOPS, y / float(max(NAV_PT * scale - 1, 1)))
     return LINEN
 
 
@@ -435,6 +447,111 @@ def btn_px(x, y, w, h, stops, radius, gloss=True, scale=1):
     return (int(c[0]), int(c[1]), int(c[2]), alpha)
 
 
+def menu_btn_px(x, y, w, h, scale=1):
+    """导航栏右侧「三横线」圆钮（V0.3 拟物版）：深蓝皮革圆底 + 缝线环 + 奶油色横线。
+    和 NavBar 同一材质族：上亮下暗的皮革渐变、1px 深色外描边、内圈虚线缝线。"""
+    r = 15.0 * scale
+    cx = (w - 1) / 2.0
+    cy = (h - 1) / 2.0
+    dx, dy = x - cx, y - cy
+    d = (dx * dx + dy * dy) ** 0.5
+    if d > r + 0.5:
+        return (0, 0, 0, 0)
+    alpha = 255 if d <= r - 0.5 else int(255 * (r + 0.5 - d))
+    t = y / float(max(h - 1, 1))
+    # 皮革底：竖直渐变，比导航条压暗一档，避免在蓝条上「发白」
+    c = list(_seg_grad([(0.0, (57, 88, 122)), (0.45, (33, 56, 82)),
+                        (1.0, (19, 37, 56))], t))
+    if y <= 1.5 * scale:                     # 顶部内高光
+        c = [min(255, v + 28) for v in c]
+    elif y >= h - 1 - 1.5 * scale:           # 底部暗线
+        c = [max(0, v - 16) for v in c]
+    if d > r - 1.0 * scale:                  # 外描边
+        c = [max(0, v - 34) for v in c]
+    else:
+        # 缝线环：半径 r-3.2，按角度切成 26 段，实虚交替（圆周版 3pt 缝线）
+        rr = r - 3.2 * scale
+        if abs(d - rr) <= 0.6 * scale:
+            ang = math.atan2(dy, dx) + math.pi
+            seg = int(ang / (2.0 * math.pi) * 26.0)
+            if seg % 2 == 0:
+                c = [188, 176, 148]
+    # 三条奶油横线：宽 14pt、粗 2pt
+    u = y / float(scale)
+    for cyb in (11.0, 15.0, 19.0):
+        if abs(u - cyb) <= 1.0 and abs(x - cx) <= 7.0 * scale:
+            c = [243, 234, 216]
+            break
+    return (int(c[0]), int(c[1]), int(c[2]), alpha)
+
+
+def round_btn_px(x, y, w, h, scale=1, glyph="arrow"):
+    """通用拟物圆钮：与 MenuBtn 完全同源的皮革圆底 + 缝线环，
+    中央换成奶油箭头（返回）或电源符号（退出登录）。尺寸与 MenuBtn 同为 30pt。
+    glyph: "arrow" = 左向箭头 ‹， "power" = 退出电源符号 ⏻。"""
+    r = 15.0 * scale
+    cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
+    dx, dy = x - cx, y - cy
+    d = (dx * dx + dy * dy) ** 0.5
+    if d > r + 0.5:
+        return (0, 0, 0, 0)
+    alpha = 255 if d <= r - 0.5 else int(255 * (r + 0.5 - d))
+    t = y / float(max(h - 1, 1))
+    c = list(_seg_grad([(0.0, (57, 88, 122)), (0.45, (33, 56, 82)),
+                        (1.0, (19, 37, 56))], t))
+    if y <= 1.5 * scale:
+        c = [min(255, v + 28) for v in c]
+    elif y >= h - 1 - 1.5 * scale:
+        c = [max(0, v - 16) for v in c]
+    if d > r - 1.0 * scale:
+        c = [max(0, v - 34) for v in c]
+    else:
+        rr = r - 3.2 * scale
+        if abs(d - rr) <= 0.6 * scale:
+            ang = math.atan2(dy, dx) + math.pi
+            if int(ang / (2.0 * math.pi) * 26.0) % 2 == 0:
+                c = [188, 176, 148]
+
+    u = (x - cx) / scale
+    v = (y - cy) / scale
+    cream = [243, 234, 216]
+    if glyph == "arrow":
+        # 左箭头：一条 45° 折线（‹），线宽 1.6pt，中心略右移对齐视觉
+        ax, ay = u - 1.0, v
+        if (abs(ay + ax + 4.5) < 1.5 and -5.0 <= ax <= 1.0) or \
+           (abs(ay - ax - 4.5) < 1.5 and -5.0 <= ax <= 1.0):
+            c = cream
+    elif glyph == "skin":
+        # 皮肤切换：一个圆分成两半（左实右描），像调色盘/双色圆
+        rr2 = (u * u + v * v) ** 0.5
+        if abs(rr2 - 5.2) < 1.2:
+            c = cream
+        if rr2 < 4.4 and u < 0:
+            c = cream
+    else:
+        # 电源符号 ⏻：半径 5pt 的圆环（顶部缺口）+ 中间竖线
+        ring = (u * u + v * v) ** 0.5
+        if abs(ring - 5.0) < 1.3 and not (v < -3.0 and abs(u) < 2.2):
+            c = cream
+        if abs(u) < 1.3 and -8.5 <= v <= -1.0:
+            c = cream
+    return (int(c[0]), int(c[1]), int(c[2]), alpha)
+
+
+def menu_leather_px(x, y, w, h, scale=1):
+    """菜单面板的皮革底纹（8pt 循环可平铺）：深蓝底 + 确定性微噪颗粒。
+    做成贴图而不是整块渐变——面板高度随分组数变化，拉伸渐变会出现接缝。"""
+    u = x // scale
+    v = y // scale
+    d = ((u * 11 + v * 7) % 5) - 2
+    d2 = ((u * 3 + v * 17) % 3) - 1
+    base = (23, 39, 58)
+    r = base[0] + d * 2 + d2
+    g = base[1] + d * 2 + d2
+    b = base[2] + d * 2 + d2
+    return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
+
+
 def linen_px(x, y, w, h, scale=1):
     """亚麻背景平铺贴图：8pt 一个循环，经纬线各 1pt。
 
@@ -457,6 +574,122 @@ def linen_px(x, y, w, h, scale=1):
     return (max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)))
 
 
+# ---- 提醒事项皮肤（iOS 6 Reminders 风格）---------------------------------
+# 运行时第二套皮肤，资源名统一加 R_ 前缀，与 V0.3 皮革皮肤共存于 bundle。
+# 特征：深灰拉丝金属导航条、米白点格纸 + 左侧红竖线、米白纸卡、银灰圆钮，
+# 无虚线缝线（用户要求去掉）。高光/暗边保留，避免平涂感。
+
+def r_nav_px(x, y, w, h, scale=1):
+    """深灰拉丝金属导航条：竖直渐变 + 1px 横向拉丝 + 顶高光/底暗边，无缝线。"""
+    t = y / float(max(h - 1, 1))
+    base = _seg_grad([(0.0, (88, 88, 88)), (0.14, (62, 62, 62)),
+                      (0.62, (46, 46, 46)), (1.0, (30, 30, 30))], t)
+    d = (((y // scale) % 3) - 1) * 4.0          # 横向拉丝
+    r, g, b = base[0] + d, base[1] + d, base[2] + d
+    if y == 0:
+        r, g, b = r + 30, g + 30, b + 30        # 顶部玻璃高光
+    if y == h - 1:
+        r, g, b = r - 18, g - 18, b - 18        # 底部暗边
+    elif y == h - 2:
+        r, g, b = r - 9, g - 9, b - 9
+    return (_clamp(r), _clamp(g), _clamp(b))
+
+
+def r_linen_px(x, y, w, h, scale=1):
+    """米白点格纸：22pt 一个浅灰点阵；红竖线在 22pt 处（平铺后每屏一条，
+    pattern 以 8pt 贴图铺不了红线的全局位置，故红线单独在界面层画）。
+    这里只做点格纸底 + 极淡斑点。"""
+    u = x // scale
+    v = y // scale
+    base = (247, 245, 238)
+    if u % 22 == 0 and v % 22 == 0:
+        base = (214, 210, 199)                  # 网格交点浅灰点
+    elif u % 22 == 0 or v % 22 == 0:
+        base = (242, 240, 232)                  # 更淡的网格线
+    d = ((u * 7 + v * 3) % 3) - 1
+    return (_clamp(base[0] + d), _clamp(base[1] + d), _clamp(base[2] + d))
+
+
+def r_card_px(x, y, w, h, scale=1):
+    """米白纸卡（九宫格）：顶部高光 + 底部暗边 + 浅灰描边，圆角外透明，无缝线。"""
+    r = 8 * scale
+    if not in_round_rect(x, y, w, h, r):
+        return (0, 0, 0, 0)
+    t = y / float(max(h - 1, 1))
+    c = _seg_grad([(0.0, (253, 252, 248)), (1.0, (244, 242, 234))], t)
+    if x == 0 or y == 0 or x == w - 1 or y == h - 1:
+        c = (196, 194, 186)
+    elif y == scale:
+        c = (255, 255, 255)
+    return (int(c[0]), int(c[1]), int(c[2]), 255)
+
+
+def r_leather_px(x, y, w, h, scale=1):
+    """菜单面板底：深灰拉丝（比导航条略深），8pt 平铺。"""
+    u = x // scale
+    v = y // scale
+    d = ((v % 3) - 1) * 4
+    base = (40 + d, 40 + d, 40 + d)
+    return (_clamp(base[0]), _clamp(base[1]), _clamp(base[2]))
+
+
+def r_round_btn_px(x, y, w, h, scale=1, glyph=None):
+    """银灰金属圆钮：与 V0.3 圆钮同几何，配色换银灰，无虚线缝线环。
+    glyph: None=三横线(菜单) "arrow"=返回 "power"=退出。"""
+    r = 15.0 * scale
+    cx, cy = (w - 1) / 2.0, (h - 1) / 2.0
+    dx, dy = x - cx, y - cy
+    d = (dx * dx + dy * dy) ** 0.5
+    if d > r + 0.5:
+        return (0, 0, 0, 0)
+    alpha = 255 if d <= r - 0.5 else int(255 * (r + 0.5 - d))
+    t = y / float(max(h - 1, 1))
+    c = list(_seg_grad([(0.0, (245, 245, 245)), (0.45, (196, 196, 196)),
+                        (1.0, (140, 140, 140))], t))
+    if d > r - 1.0 * scale:
+        c = [max(0, v - 55) for v in c]
+    # 高光：上半部一道弧
+    if 3.0 * scale < d < r - 2.0 * scale and dy < -4.0 * scale:
+        c = [min(255, v + 18) for v in c]
+    u = (x - cx) / scale
+    v = (y - cy) / scale
+    dark = [70, 70, 70]
+    if glyph is None:
+        for cyb in (11.0, 15.0, 19.0):
+            if abs(v - (cyb - 15.0)) <= 1.0 and abs(u) <= 7.0:
+                c = dark
+                break
+    elif glyph == "arrow":
+        ax, ay = u - 1.0, v
+        if (abs(ay + ax + 4.5) < 1.5 and -5.0 <= ax <= 1.0) or \
+           (abs(ay - ax - 4.5) < 1.5 and -5.0 <= ax <= 1.0):
+            c = dark
+    elif glyph == "power":
+        ring = (u * u + v * v) ** 0.5
+        if abs(ring - 5.0) < 1.3 and not (v < -3.0 and abs(u) < 2.2):
+            c = dark
+        if abs(u) < 1.3 and -8.5 <= v <= -1.0:
+            c = dark
+    elif glyph == "skin":
+        rr2 = (u * u + v * v) ** 0.5
+        if abs(rr2 - 5.2) < 1.2 or (rr2 < 4.4 and u < 0):
+            c = dark
+    return (int(c[0]), int(c[1]), int(c[2]), alpha)
+
+
+def r_pill_px(x, y, w, h, scale=1):
+    """银灰玻璃胶囊（菜单选中项）：顶部亮、底部暗，圆角外透明。"""
+    r = 20 * scale
+    if not in_round_rect(x, y, w, h, r):
+        return (0, 0, 0, 0)
+    t = y / float(max(h - 1, 1))
+    c = _seg_grad([(0.0, (255, 255, 255)), (0.5, (222, 222, 222)),
+                   (1.0, (176, 176, 176))], t)
+    if x == 0 or y == 0 or x == w - 1 or y == h - 1:
+        c = (128, 128, 128)
+    return (int(c[0]), int(c[1]), int(c[2]), 255)
+
+
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else "Resources"
     os.makedirs(out, exist_ok=True)
@@ -466,16 +699,44 @@ def main():
         write_png_pixels(os.path.join(out, name), w, h,
                          lambda x, y, ww, hh, s=sc: nav_px(x, y, ww, hh, s))
 
-    # 立体按钮：深蓝 60x26（可横向拉伸到 80pt 返回键）、红色 92x36（退出登录）
+    # 导航栏右侧汉堡按钮：30pt 皮革圆 + 缝线环 + 三横线（流菜单入口）
+    for name, w, h, sc in [("MenuBtn.png", 30, 30, 1), ("MenuBtn@2x.png", 60, 60, 2)]:
+        write_png_pixels_rgba(os.path.join(out, name), w, h,
+                              lambda x, y, ww, hh, s=sc: menu_btn_px(x, y, ww, hh, s))
+
+    # 与汉堡钮同款的返回箭头 / 退出电源圆钮（正文、账号面板、退出登录）
+    for name, glyph in [("BackBtn", "arrow"), ("LogoutBtn", "power"), ("SkinBtn", "skin")]:
+        for suffix, size, sc in [("", 30, 1), ("@2x", 60, 2)]:
+            write_png_pixels_rgba(os.path.join(out, name + suffix + ".png"),
+                                  size, size,
+                                  lambda x, y, ww, hh, s=sc, g=glyph:
+                                      round_btn_px(x, y, ww, hh, s, g))
+
+    # 菜单面板皮革底纹（8pt 平铺）
+    for name, w, h, sc in [("MenuLeather.png", 8, 8, 1), ("MenuLeather@2x.png", 16, 16, 2)]:
+        write_png_pixels(os.path.join(out, name), w, h,
+                         lambda x, y, ww, hh, s=sc: menu_leather_px(x, y, ww, hh, s))
+
+    # 立体按钮：深蓝 60x26（可横向拉伸到 80pt 返回键）、红色 92x36（退出登录）、
+    # 深蓝 92x36（36pt 高的宽按钮，如面板里的「第三格」切换）。
+    # 注意：iOS 6 的九宫格在上下 inset 为 0 时中间带按原尺寸平铺而非拉伸，
+    # 按钮高于底图会出「双下巴」——高按钮必须用 36pt 的底图，别拿 26pt 的撑。
     for name, w, h, stops, rad, gl, sc in [
         ("BtnNavy.png", 60, 26, BTN_NAVY, 7, 1, 1),
         ("BtnNavy@2x.png", 120, 52, BTN_NAVY, 7, 1, 2),
         ("BtnNavyDown.png", 60, 26, BTN_NAVY_DOWN, 7, 0, 1),
         ("BtnNavyDown@2x.png", 120, 52, BTN_NAVY_DOWN, 7, 0, 2),
+        ("BtnBlue36.png", 92, 36, BTN_NAVY, 9, 1, 1),
+        ("BtnBlue36@2x.png", 184, 72, BTN_NAVY, 9, 1, 2),
+        ("BtnBlue36Down.png", 92, 36, BTN_NAVY_DOWN, 9, 0, 1),
+        ("BtnBlue36Down@2x.png", 184, 72, BTN_NAVY_DOWN, 9, 0, 2),
         ("BtnRed.png", 92, 36, BTN_RED, 9, 1, 1),
         ("BtnRed@2x.png", 184, 72, BTN_RED, 9, 1, 2),
         ("BtnRedDown.png", 92, 36, BTN_RED_DOWN, 9, 0, 1),
         ("BtnRedDown@2x.png", 184, 72, BTN_RED_DOWN, 9, 0, 2),
+        # 菜单选中态胶囊：180x40，与菜单行同尺寸，避免九宫格竖向平铺
+        ("PillBlue40.png", 180, 40, BTN_NAVY, 20, 1, 1),
+        ("PillBlue40@2x.png", 360, 80, BTN_NAVY, 20, 1, 2),
     ]:
         write_png_pixels_rgba(os.path.join(out, name), w, h,
                               lambda x, y, ww, hh, st=stops, rd=rad, g=gl, s2=sc:
@@ -523,6 +784,41 @@ def main():
                            ("PanelCard@2x.png", 96, 96, 2)]:
         write_png_pixels_rgba(os.path.join(out, name), w, h,
                               lambda x, y, ww, hh, s=sc: panel_card_px(x, y, ww, hh, s))
+
+    # ---- 提醒事项皮肤（R_ 前缀，运行时切换的第二套皮肤）----------------
+    # 导航条：深灰拉丝金属
+    for suffix, w, h, sc in [("", 320, NAV_PT, 1), ("@2x", 640, NAV_PT * 2, 2)]:
+        write_png_pixels(os.path.join(out, "R_NavBar" + suffix + ".png"), w, h,
+                         lambda x, y, ww, hh, s=sc: r_nav_px(x, y, ww, hh, s))
+    # 背景：米白点格纸
+    for suffix, w, h, sc in [("", 22, 22, 1), ("@2x", 44, 44, 2)]:
+        write_png_pixels(os.path.join(out, "R_Linen" + suffix + ".png"), w, h,
+                         lambda x, y, ww, hh, s=sc: r_linen_px(x, y, ww, hh, s))
+    # 纸卡：米白（九宫格）
+    for suffix, w, h, sc in [("", 48, 48, 1), ("@2x", 96, 96, 2)]:
+        write_png_pixels_rgba(os.path.join(out, "R_PanelCard" + suffix + ".png"), w, h,
+                              lambda x, y, ww, hh, s=sc: r_card_px(x, y, ww, hh, s))
+    # 菜单面板底：深灰拉丝
+    for suffix, w, h, sc in [("", 8, 8, 1), ("@2x", 16, 16, 2)]:
+        write_png_pixels(os.path.join(out, "R_MenuLeather" + suffix + ".png"), w, h,
+                         lambda x, y, ww, hh, s=sc: r_leather_px(x, y, ww, hh, s))
+    # 三颗圆钮：菜单三横线 / 返回箭头 / 退出电源
+    for base, glyph in [("MenuBtn", None), ("BackBtn", "arrow"),
+                        ("LogoutBtn", "power"), ("SkinBtn", "skin")]:
+        for suffix, size, sc in [("", 30, 1), ("@2x", 60, 2)]:
+            write_png_pixels_rgba(os.path.join(out, "R_" + base + suffix + ".png"),
+                                  size, size,
+                                  lambda x, y, ww, hh, s=sc, g=glyph:
+                                      r_round_btn_px(x, y, ww, hh, s, g))
+    # 菜单选中胶囊：银灰玻璃
+    for suffix, w, h, sc in [("", 180, 40, 1), ("@2x", 360, 80, 2)]:
+        write_png_pixels_rgba(os.path.join(out, "R_PillBlue40" + suffix + ".png"), w, h,
+                              lambda x, y, ww, hh, s=sc: r_pill_px(x, y, ww, hh, s))
+    # 缝线：提醒事项皮肤不要虚线，生成全透明小图，AddStitchBorder 会拿到但不显示
+    for name, w, h in [("StitchH", 6, 1), ("StitchH@2x", 12, 2),
+                       ("StitchV", 1, 6), ("StitchV@2x", 2, 12)]:
+        write_png_pixels_rgba(os.path.join(out, "R_" + name + ".png"), w, h,
+                              lambda x, y, ww, hh: (0, 0, 0, 0))
 
     # App 图标：若 Resources 里已放入自定义图标（如从 IPA 提取的微博图标），
     # 保留不覆盖；否则才生成默认的蓝色同心圆图标。

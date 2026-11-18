@@ -21,6 +21,7 @@ static NSMutableArray   *sPosts = nil;
 static NSMutableData    *sBuffer = nil;
 static NSURLConnection *sConnection = nil;
 static id                sConnectionDelegate = nil;
+static id                sGidDelegate = nil;
 static int               sState = 0;
 static NSString         *sErrorText = nil;
 static void            (*sUpdateCallback)(void) = 0;
@@ -38,7 +39,133 @@ static NSString *sUID = nil;
 static NSString *sFeedID = nil;
 static NSString *sUserName = nil;
 static NSString *sCookie = nil;
-static int       sFeed = 0;          /* 0=热门 1=登录后的时间线 */
+static int       sFeed = 0;          /* 0=热门 1=关注 2=我的 3=特别关注 4=自定义分组 */
+
+/* ---------- 第三格：我的 / 特别关注（用户可切换） ----------
+   特别关注(3)走微博服务端的真分组：m.weibo.cn 手机版首页的频道面板里
+   就有「特别关注」入口（逆向 weibo-lite 的 main 分包确认）。流程两段式：
+   先 GET /api/config/list 拿 data.groups[] 里名为「特别关注」的 gid，
+   再 GET /feed/group?gid=<gid> 拉时间线。返回 data.statuses[]，
+   字段与 feed/friends 同款，ParseBuffer 的 statuses 分支直接复用；
+   翻页同关注流，带上一页的 data.max_id。分组成员在网页端/官方 App 维护。 */
+static NSString *sSpecialGid = nil;   /* 服务端「特别关注」分组的 gid，登录后懒解析 */
+
+/* ---------- 分组列表（导航栏汉堡菜单用）----------
+   GET /api/config/list -> data.groups[]，元素统一转成 {name, gid}。
+   拉列表时顺带缓存「特别关注」的 gid，省掉 feed 3 的一次两段式解析。
+   独立一套 buffer/connection/delegate（照抄 profile 那套），不与 feed
+   请求共用人：菜单打开时 feed 可能正在拉流，不能互相取消。 */
+static NSMutableArray   *sGroups = nil;
+static NSMutableData    *sGroupsBuffer = nil;
+static NSURLConnection *sGroupsConnection = nil;
+static id                sGroupsDelegate = nil;
+static void            (*sGroupsCallback)(void) = 0;
+
+extern unsigned long strlen(const char *);
+extern void *malloc(unsigned long);
+extern void  free(void *);
+extern int   open(const char *, int, ...);
+extern long  read(int, void *, unsigned long);
+extern int   close(int);
+extern long  write(int, const void *, unsigned long);
+extern char *strncpy(char *dst, const char *src, unsigned long n);
+
+/* ---------- 当前流（汉堡菜单所选）：kind 直接就是 feed id ----------
+   0=热门 1=关注 2=我的 3=特别关注 4=服务端任意分组。
+   持久化到 weibo_slot.txt（沿用 weibo_logout.flag 那套「不删文件、改内容」）：
+     hot\n / follow\n / mine\n / special\n -> feed 0/1/2/3
+     group\ngid=xxx\nname=yyy\n            -> feed 4（UTF-8 中文原样读写）
+   文件不存在（首次安装/从未选过）时按登录态定默认：登录=关注(1)，游客=热门(0)。
+   注意：登录态由 WeiboStoreInitLogin() 先设置，EnsureSlotState() 才会读到正确值。 */
+static int KeyIs(const char *key, unsigned long klen, const char *literal);   /* 定义在下方 */
+static int       sSlotKind = -1;      /* -1 表示尚未从文件/默认值初始化 */
+static NSString *sSlotGid = nil;      /* kind=4 时的分组 gid */
+static NSString *sSlotName = nil;     /* kind=4 时的分组名 */
+static int       sSlotLoaded = 0;     /* weibo_slot.txt 只解析一次 */
+static int       sSlotExplicit = 0;   /* 文件里是否真写了选择；1=用户选过，0=按登录态默认 */
+
+static NSString *SlotPath(void)
+{
+    return [NSString stringWithFormat:@"%@/weibo_slot.txt", NSHomeDirectory()];
+}
+
+static NSString *SlotValue(const char *p, unsigned long len)
+{
+    char tmp[256];
+    unsigned long i;
+    if (len > sizeof(tmp) - 1) len = sizeof(tmp) - 1;
+    for (i = 0; i < len; i++) tmp[i] = p[i];
+    tmp[len] = '\0';
+    return [NSString stringWithUTF8String:tmp];
+}
+
+/* 首次访问时从文件读回槽位设置；之后全走内存，SelectSlot 负责同步写文件 */
+static void EnsureSlotState(void)
+{
+    static char buf[512];
+    const char *cpath, *p, *line, *e;
+    int fd;
+    long n;
+
+    if (sSlotLoaded) return;
+    sSlotLoaded = 1;
+    /* 默认：登录看关注(1)，游客看热门(0)。文件里有合法选择会覆盖它。 */
+    sSlotKind = sCookie ? 1 : 0;
+    cpath = [SlotPath() UTF8String];
+    if (!cpath) return;
+    fd = open(cpath, 0);
+    if (fd < 0) return;
+    n = read(fd, buf, sizeof(buf) - 1);
+    close(fd);
+    if (n <= 0) return;
+    buf[n] = '\0';
+
+    /* 第一行：菜单所选的流。兼容旧版文件（mine/special/group 语义沿用，
+       但旧 mine=我的 在新编号里是 2，旧 special=3，group=4）。 */
+    p = buf;
+    line = p;
+    while (*p && *p != '\n') p++;
+    e = p;
+    if (*p == '\n') p++;
+    if (KeyIs(line, (unsigned long)(e - line), "hot"))          sSlotKind = 0;
+    else if (KeyIs(line, (unsigned long)(e - line), "follow"))  sSlotKind = 1;
+    else if (KeyIs(line, (unsigned long)(e - line), "mine"))    sSlotKind = 2;
+    else if (KeyIs(line, (unsigned long)(e - line), "special")) sSlotKind = 3;
+    else if (KeyIs(line, (unsigned long)(e - line), "group"))   sSlotKind = 4;
+    else return;                    /* 空/无法识别：保留按登录态算出的默认 */
+    sSlotExplicit = 1;
+
+    /* group 的后续行：gid=<..> / name=<..> */
+    while (sSlotKind == 4 && *p) {
+        const char *eq;
+        NSString *v;
+        line = p;
+        while (*p && *p != '\n') p++;
+        e = p;
+        if (*p == '\n') p++;
+        if (e > line && e[-1] == '\r') e--;
+        eq = line;
+        while (eq < e && *eq != '=') eq++;
+        if (eq >= e) continue;
+        if (KeyIs(line, (unsigned long)(eq - line), "gid")) {
+            v = SlotValue(eq + 1, (unsigned long)(e - eq - 1));
+            if (v && [v length] > 0) sSlotGid = [v retain];
+        } else if (KeyIs(line, (unsigned long)(eq - line), "name")) {
+            v = SlotValue(eq + 1, (unsigned long)(e - eq - 1));
+            if (v && [v length] > 0) sSlotName = [v retain];
+        }
+    }
+    /* 槽位是分组却缺 gid：文件损坏，退回游客默认（热门） */
+    if (sSlotKind == 4 && (!sSlotGid || [sSlotGid length] == 0)) {
+        sSlotKind = 0;
+        sSlotExplicit = 0;
+    }
+    /* 未登录却指向需要登录的流：同样退回热门（避免登录后菜单高亮与内容不符） */
+    if (!sCookie && sSlotKind > 0) {
+        sSlotKind = 0;
+        sSlotExplicit = 0;
+    }
+}
 
 /* 当前账号资料：登录后异步拉取 containerid=100505{uid} 的 userInfo */
 static NSMutableDictionary *sProfile = nil;
@@ -49,15 +176,6 @@ static void            (*sProfileCallback)(void) = 0;
 
 /* 与扫码脚本补移动端 Cookie 时使用的 UA 保持一致，降低 UA/Cookie 绑定风控 */
 #define kMobileUA "Mozilla/5.0 (iPhone; CPU iPhone OS 10_3 like Mac OS X) AppleWebKit/603.1.30 (KHTML, like Gecko) Version/10.0 Mobile/14E277 Safari/602.1"
-
-extern unsigned long strlen(const char *);
-extern void *malloc(unsigned long);
-extern void  free(void *);
-extern int   open(const char *, int, ...);
-extern long  read(int, void *, unsigned long);
-extern int   close(int);
-extern long  write(int, const void *, unsigned long);
-extern char *strncpy(char *dst, const char *src, unsigned long n);
 
 static int StartsWith(const char *s, const char *prefix)
 {
@@ -207,6 +325,22 @@ void WeiboStoreLogout(void)
     if (sFeedID)   { [sFeedID release];   sFeedID = nil; }
     if (sUserName) { [sUserName release]; sUserName = nil; }
     if (sCookie)   { [sCookie release];   sCookie = nil; }
+    /* gid 是按账号解析的，换号必须重取（不同账号分组不同） */
+    if (sSpecialGid) { [sSpecialGid release]; sSpecialGid = nil; }
+    if (sSlotGid)    { [sSlotGid release];    sSlotGid = nil; }
+    if (sSlotName)   { [sSlotName release];   sSlotName = nil; }
+    sSlotKind = 0;                     /* 登出 = 游客 = 热门 */
+    sSlotLoaded = 1;
+    sSlotExplicit = 0;
+    {   /* 槽位文件同步复位：重启后不会停在需要登录的流上 */
+        const char *sp = [SlotPath() UTF8String];
+        int sfd = sp ? open(sp, 0x601, 0644) : -1;
+        if (sfd >= 0) { write(sfd, "hot\n", 4); close(sfd); }
+    }
+    /* 分组列表同样按账号缓存，登出即弃 */
+    if (sGroups)     { [sGroups release];     sGroups = nil; }
+    if (sGroupsConnection) { [sGroupsConnection cancel]; [sGroupsConnection release]; sGroupsConnection = nil; }
+    if (sGroupsBuffer)     { [sGroupsBuffer release];     sGroupsBuffer = nil; }
     if (sProfile)  { [sProfile release];  sProfile = nil; }
     if (sProfileConnection) { [sProfileConnection cancel]; [sProfileConnection release]; sProfileConnection = nil; }
     if (sProfileBuffer)     { [sProfileBuffer release];     sProfileBuffer = nil; }
@@ -335,9 +469,21 @@ void WeiboStoreFetchProfile(void)
    sPage==1 时不带翻页参数，取第一页。 */
 static NSString *FeedURLString(void)
 {
+    if (sFeed == 3 || sFeed == 4) {
+        /* 服务端分组流：3=特别关注（gid 由 WeiboStoreLoad 先经 /api/config/list
+           两段式解析），4=用户在汉堡菜单里选的任意分组（gid 来自槽位设置，
+           选定时就已经拿到）。翻页同关注流，带上上一页的 data.max_id。 */
+        NSString *gid = (sFeed == 3) ? sSpecialGid : sSlotGid;
+        if (!gid) gid = @"";
+        if (sCursor && [sCursor length] > 0)
+            return [NSString stringWithFormat:
+                    @"https://m.weibo.cn/feed/group?gid=%@&max_id=%@", gid, sCursor];
+        return [NSString stringWithFormat:
+                @"https://m.weibo.cn/feed/group?gid=%@", gid];
+    }
     if (sFeed == 1) {
-        /* 只要有游标就带 max_id。原先依赖 sPage>1，但关注流的 sPage 不递增，
-           导致永远拉到同一页首页（全是重复）。首屏 sCursor 为空，自然走首页。 */
+        /* 关注流：只要有游标就带 max_id。原先依赖 sPage>1，但关注流的 sPage
+           不递增，导致永远拉到同一页首页（全是重复）。首屏 sCursor 为空。 */
         if (sCursor && [sCursor length] > 0)
             return [NSString stringWithFormat:
                     @"https://m.weibo.cn/feed/friends?max_id=%@", sCursor];
@@ -635,6 +781,77 @@ static NSString *BuildRetweetText(id mblog, id retweet, NSString **originName)
     return result;
 }
 
+/* ===== 当前流槽位：kind 直接就是 feed id（0热门 1关注 2我的 3特别关注 4分组）=====
+   持久化到 weibo_slot.txt（纯 C 文件 IO：沿用 weibo_logout.flag 那套做法）：
+     hot\n / follow\n / mine\n / special\n -> feed 0/1/2/3
+     group\ngid=xxx\nname=yyy\n            -> feed 4
+   分组名按 UTF-8 原样写入/读回，stringWithUTF8String 能正确还原中文。
+   状态变量与文件解析（SlotPath/SlotValue/EnsureSlotState）声明在文件顶部，
+   Logout 与 FeedURLString 在定义这些 getter 之前就要用到。 */
+
+int WeiboStoreSlotKind(void)
+{
+    EnsureSlotState();
+    return sSlotKind;
+}
+
+NSString *WeiboStoreSlotName(void)
+{
+    EnsureSlotState();
+    if (sSlotKind == 1) return @"关注";
+    if (sSlotKind == 2) return @"我的";
+    if (sSlotKind == 3) return @"特别关注";
+    if (sSlotKind == 4) return (sSlotName && [sSlotName length] > 0) ? sSlotName : @"分组";
+    return @"热门";
+}
+
+NSString *WeiboStoreSlotGid(void)
+{
+    EnsureSlotState();
+    return sSlotGid;
+}
+
+void WeiboStoreSelectSlot(int kind, NSString *gid, NSString *name)
+{
+    const char *cpath = [SlotPath() UTF8String];
+    int fd;
+
+    if (sSlotGid)  { [sSlotGid release];  sSlotGid = nil; }
+    if (sSlotName) { [sSlotName release]; sSlotName = nil; }
+    sSlotKind = (kind >= 0 && kind <= 4) ? kind : 0;
+    sSlotLoaded = 1;
+    sSlotExplicit = 1;
+    if (sSlotKind == 4) {
+        if (gid && [gid length] > 0) {
+            sSlotGid = [gid retain];
+            sSlotName = [(name && [name length] > 0) ? name : @"分组" retain];
+        } else {
+            sSlotKind = 0;   /* 没有 gid 的分组选择无效，退回热门 */
+            sSlotExplicit = 0;
+        }
+    }
+    if (!cpath) return;
+    fd = open(cpath, 0x601, 0644);   /* WRONLY|CREAT|TRUNC */
+    if (fd >= 0) {
+        if (sSlotKind == 4) {
+            NSString *txt = [NSString stringWithFormat:
+                             @"group\ngid=%@\nname=%@\n", sSlotGid, sSlotName];
+            const char *c = [txt UTF8String];
+            if (c) write(fd, c, strlen(c));
+        } else {
+            const char *mark = (sSlotKind == 1) ? "follow\n"
+                             : (sSlotKind == 2) ? "mine\n"
+                             : (sSlotKind == 3) ? "special\n" : "hot\n";
+            write(fd, mark, strlen(mark));
+        }
+        close(fd);
+    }
+#ifdef LEGACY_DIAG
+    diag([[NSString stringWithFormat:@"WeiboStore: slot kind=%d name=%@",
+           sSlotKind, (sSlotKind == 4 && sSlotName) ? sSlotName : @""] UTF8String]);
+#endif
+}
+
 static void ParseBuffer(void)
 {
     NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
@@ -743,6 +960,14 @@ static void ParseBuffer(void)
             NSString *pid = AsString([mblog objectForKey:@"id"]);
             if (pid && [pid length] > 0) [post setObject:pid forKey:@"id"];
         }
+        /* 作者 uid：特别关注白名单过滤要用，正文页「特别关注」按钮也用。
+           user.id 在 m.weibo.cn 上有时是数字、有时是字符串，两种都兜住。 */
+        {
+            id uidObj = [user objectForKey:@"id"];
+            NSString *uidStr = AsString(uidObj);
+            if (!uidStr && uidObj) uidStr = [(NSNumber *)uidObj stringValue];
+            if (uidStr && [uidStr length] > 0) [post setObject:uidStr forKey:@"uid"];
+        }
         if (avatar) [post setObject:avatar forKey:@"avatar"];
         if (thumb)  [post setObject:thumb  forKey:@"thumb"];
         if (large)  [post setObject:large  forKey:@"large"];
@@ -763,7 +988,7 @@ static void ParseBuffer(void)
             if (sid) sSinceID = [AsNumber(sid) intValue];
             else sSinceID += 1;
             sHasMore = ([list count] > 0) ? 1 : 0;
-        } else if (sFeed == 1) {
+        } else if (sFeed == 1 || sFeed == 3 || sFeed == 4) {
             /* data.max_id 实测是数字(NSNumber)，另有 max_id_str 为同值字符串。
                毫秒级时间戳超过 int 范围，必须走字符串而不是 intValue，否则被截断。 */
             id mid = [data objectForKey:@"max_id_str"];
@@ -788,7 +1013,7 @@ static void ParseBuffer(void)
 
     /* 加载更多：把新一页追加到已有列表；刷新：替换 */
     if (sLoadingMore && sPosts && [sPosts count] > 0) {
-        if (sFeed == 1) {
+        if (sFeed == 1 || sFeed == 3 || sFeed == 4) {
             /* 关注流：max_id 分页偶尔会回带上一页末条，按 id 去重后再追加，
                避免列表里出现重复微博。热门/我的保持原样，不走这段。 */
             NSMutableDictionary *seen = [[NSMutableDictionary alloc] init];
@@ -852,6 +1077,7 @@ static void ParseBuffer(void)
     sLoadingMore = 0;                       /* 不论成败都复位加载更多标志 */
     if (sConnection) { [sConnection release]; sConnection = nil; }
     if (sBuffer)     { [sBuffer release];     sBuffer = nil; }
+
     if (sUpdateCallback) sUpdateCallback();
 }
 
@@ -892,6 +1118,8 @@ NSString *WeiboStoreFeedName(void)
 {
     if (sFeed == 1) return @"关注";
     if (sFeed == 2) return @"我的";
+    if (sFeed == 3) return @"特别关注";
+    if (sFeed == 4) return WeiboStoreSlotName();
     return @"热门";
 }
 
@@ -902,9 +1130,13 @@ void WeiboStoreSetUpdateCallback(void (*callback)(void))
 
 void WeiboStoreSwitchFeed(int feed)
 {
+    EnsureSlotState();                       /* feed 4 的 gid 在槽位文件里 */
     if (sFeed == feed) return;
     if (feed == 1 && !WeiboStoreLoggedIn()) return;   /* 关注流需登录 */
     if (feed == 2 && !WeiboStoreLoggedIn()) return;   /* 我的需登录 */
+    if (feed == 3 && !WeiboStoreLoggedIn()) return;   /* 特别关注需登录 */
+    if (feed == 4 && (!WeiboStoreLoggedIn() ||
+                      !sSlotGid || [sSlotGid length] == 0)) return;   /* 分组流需登录+gid */
     sFeed = feed;
     if (sConnection) { [sConnection cancel]; [sConnection release]; sConnection = nil; }
     if (sBuffer)     { [sBuffer release];     sBuffer = nil; }
@@ -962,6 +1194,221 @@ static void StartFeedRequest(void)
     if (sUpdateCallback) sUpdateCallback();
 }
 
+/* ===== 特别关注第一段：/api/config/list 解析「特别关注」的 gid ===== */
+
+static void StartSpecialGidRequest(void);
+
+@interface WeiboGidDelegate : NSObject @end
+
+@implementation WeiboGidDelegate
+
+- (void)connection:(NSURLConnection *)connection didReceiveResponse:(NSURLResponse *)r
+{ (void)connection; (void)r; }
+
+- (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data
+{
+    (void)connection;
+    if (sBuffer && data) [sBuffer appendData:data];
+}
+
+- (void)connectionDidFinishLoading:(NSURLConnection *)connection
+{
+    id root, groups;
+    NSUInteger i, n;
+
+    (void)connection;
+    root = sBuffer ? [NSJSONSerialization JSONObjectWithData:sBuffer
+                                                     options:0 error:(id *)0] : nil;
+    groups = root ? [AsDict([root objectForKey:@"data"]) objectForKey:@"groups"] : nil;
+    n = AsArray(groups) ? [groups count] : 0;
+
+    for (i = 0; i < n; i++) {
+        id g = AsDict([groups objectAtIndex:i]);
+        NSString *name = AsString([g objectForKey:@"name"]);
+        id gidObj = g ? [g objectForKey:@"gid"] : nil;
+        NSString *gid = AsString(gidObj);
+        if (!gid && gidObj && [gidObj isKindOfClass:[NSNumber class]])
+            gid = [(NSNumber *)gidObj stringValue];
+        if (name && gid && [name isEqualToString:@"特别关注"]) {
+            if (sSpecialGid) [sSpecialGid release];
+            sSpecialGid = [gid retain];
+            break;
+        }
+    }
+    if (sConnection) { [sConnection release]; sConnection = nil; }
+    if (sBuffer)     { [sBuffer release];     sBuffer = nil; }
+
+    if (sSpecialGid) {
+#ifdef LEGACY_DIAG
+        /* diag 宏只收单参数，带格式的必须包 #ifdef */
+        diag([[NSString stringWithFormat:@"WeiboStore: special gid=%@", sSpecialGid] UTF8String]);
+#endif
+        StartFeedRequest();          /* 第二段：拉分组时间线 */
+    } else {
+        diag("WeiboStore: special gid not found");
+        sState = 3;
+        sErrorText = @"没有找到「特别关注」分组，去网页版把人加进分组后再试";
+        if (sUpdateCallback) sUpdateCallback();
+    }
+}
+
+- (void)connection:(NSURLConnection *)connection didFailWithError:(id)error
+{
+    (void)connection; (void)error;
+    diag("WeiboStore: special gid request failed");
+    if (sConnection) { [sConnection release]; sConnection = nil; }
+    if (sBuffer)     { [sBuffer release];     sBuffer = nil; }
+    sState = 3;
+    sErrorText = @"网络连接失败，请检查 Wi-Fi 后下拉重试";
+    if (sUpdateCallback) sUpdateCallback();
+}
+
+@end
+
+/* 请求频道配置。入口：WeiboStoreLoad 在 feed==3 且无缓存 gid 时调用。 */
+static void StartSpecialGidRequest(void)
+{
+    NSURL *url;
+    NSMutableURLRequest *req;
+
+    if (sConnection) { [sConnection cancel]; [sConnection release]; sConnection = nil; }
+    if (sBuffer)     { [sBuffer release];     sBuffer = nil; }
+    sBuffer = [[NSMutableData alloc] init];
+    sState = 1;   /* 界面显示「加载中」 */
+    if (!sGidDelegate) sGidDelegate = [[WeiboGidDelegate alloc] init];
+
+    url = [NSURL URLWithString:@"https://m.weibo.cn/api/config/list"];
+    req = [NSMutableURLRequest requestWithURL:url cachePolicy:0 timeoutInterval:15.0];
+    [req setValue:sCookie forHTTPHeaderField:@"Cookie"];
+    [req setValue:@"https://m.weibo.cn/" forHTTPHeaderField:@"Referer"];
+    [req setValue:@"XMLHttpRequest" forHTTPHeaderField:@"X-Requested-With"];
+    [req setValue:@"1" forHTTPHeaderField:@"MWeibo-Pwa"];
+    [req setValue:[NSString stringWithUTF8String:kMobileUA] forHTTPHeaderField:@"User-Agent"];
+    sConnection = [[NSURLConnection alloc] initWithRequest:req
+                                                  delegate:sGidDelegate
+                                          startImmediately:YES];
+    if (!sConnection) {
+        [sBuffer release]; sBuffer = nil;
+        sState = 3;
+        sErrorText = @"网络连接失败，请检查 Wi-Fi 后下拉重试";
+        if (sUpdateCallback) sUpdateCallback();
+    }
+    if (sUpdateCallback) sUpdateCallback();
+}
+
+/* ===== 分组列表：GET /api/config/list 的 data.groups[]（汉堡菜单数据源） ===== */
+
+@interface WeiboGroupsDelegate : NSObject @end
+
+@implementation WeiboGroupsDelegate
+
+- (void)connection:(NSURLConnection *)connection didReceiveResponse:(NSURLResponse *)r
+{ (void)connection; (void)r; }
+
+- (void)connection:(NSURLConnection *)connection didReceiveData:(NSData *)data
+{
+    (void)connection;
+    if (sGroupsBuffer && data) [sGroupsBuffer appendData:data];
+}
+
+- (void)parseGroups
+{
+    id root, groups;
+    NSMutableArray *list;
+    NSUInteger i, n;
+
+    root = sGroupsBuffer ? [NSJSONSerialization JSONObjectWithData:sGroupsBuffer
+                                                             options:0 error:(id *)0] : nil;
+    groups = root ? [AsDict([root objectForKey:@"data"]) objectForKey:@"groups"] : nil;
+    n = AsArray(groups) ? [groups count] : 0;
+    if (n == 0) return;
+
+    list = [[NSMutableArray alloc] init];
+    for (i = 0; i < n; i++) {
+        id g = AsDict([groups objectAtIndex:i]);
+        NSString *name = g ? AsString([g objectForKey:@"name"]) : nil;
+        id gidObj = g ? [g objectForKey:@"gid"] : nil;
+        NSString *gid = AsString(gidObj);
+        NSMutableDictionary *item;
+
+        if (!gid && gidObj && [gidObj isKindOfClass:[NSNumber class]])
+            gid = [(NSNumber *)gidObj stringValue];
+        if (!name || [name length] == 0 || !gid || [gid length] == 0) continue;
+
+        /* 顺带缓存特别关注的 gid：feed 3 两段式的第一段从此可以省掉 */
+        if (sSpecialGid == nil && [name isEqualToString:@"特别关注"])
+            sSpecialGid = [gid retain];
+
+        item = [[NSMutableDictionary alloc] init];
+        [item setObject:name forKey:@"name"];
+        [item setObject:gid forKey:@"gid"];
+        [list addObject:item];
+        [item release];
+    }
+    if ([list count] > 0) {
+        if (sGroups) [sGroups release];
+        sGroups = list;   /* 转移所有权 */
+#ifdef LEGACY_DIAG
+        diag([[NSString stringWithFormat:@"WeiboStore: groups parsed n=%d",
+               (int)[sGroups count]] UTF8String]);
+#endif
+    } else {
+        [list release];
+    }
+}
+
+- (void)connectionDidFinishLoading:(NSURLConnection *)connection
+{
+    (void)connection;
+    [self parseGroups];
+    if (sGroupsConnection) { [sGroupsConnection release]; sGroupsConnection = nil; }
+    if (sGroupsBuffer)     { [sGroupsBuffer release];     sGroupsBuffer = nil; }
+    if (sGroupsCallback) sGroupsCallback();
+}
+
+- (void)connection:(NSURLConnection *)connection didFailWithError:(id)error
+{
+    (void)connection; (void)error;
+    diag("WeiboStore: groups request failed");
+    if (sGroupsConnection) { [sGroupsConnection release]; sGroupsConnection = nil; }
+    if (sGroupsBuffer)     { [sGroupsBuffer release];     sGroupsBuffer = nil; }
+    if (sGroupsCallback) sGroupsCallback();   /* 失败也回调：菜单把「加载中」撤掉 */
+}
+
+@end
+
+NSArray *WeiboStoreGroups(void) { return sGroups; }
+
+void WeiboStoreSetGroupsCallback(void (*callback)(void))
+{
+    sGroupsCallback = callback;
+}
+
+void WeiboStoreFetchGroups(void)
+{
+    NSURL *url;
+    NSMutableURLRequest *req;
+
+    if (!WeiboStoreLoggedIn()) return;    /* 分组列表要登录态 */
+    if (sGroupsConnection) return;        /* 正在拉取，避免重复 */
+
+    sGroupsBuffer = [[NSMutableData alloc] init];
+    if (!sGroupsDelegate) sGroupsDelegate = [[WeiboGroupsDelegate alloc] init];
+    url = [NSURL URLWithString:@"https://m.weibo.cn/api/config/list"];
+    req = [NSMutableURLRequest requestWithURL:url cachePolicy:0 timeoutInterval:15.0];
+    [req setValue:sCookie forHTTPHeaderField:@"Cookie"];
+    [req setValue:@"https://m.weibo.cn/" forHTTPHeaderField:@"Referer"];
+    [req setValue:@"XMLHttpRequest" forHTTPHeaderField:@"X-Requested-With"];
+    [req setValue:@"1" forHTTPHeaderField:@"MWeibo-Pwa"];
+    [req setValue:[NSString stringWithUTF8String:kMobileUA] forHTTPHeaderField:@"User-Agent"];
+    sGroupsConnection = [[NSURLConnection alloc] initWithRequest:req
+                                                        delegate:sGroupsDelegate
+                                                startImmediately:YES];
+    if (!sGroupsConnection) {
+        [sGroupsBuffer release]; sGroupsBuffer = nil;
+    }
+}
+
 void WeiboStoreLoad(void)
 {
     if (sState == 1) return;   /* 正在加载，避免重复请求 */
@@ -976,6 +1423,13 @@ void WeiboStoreLoad(void)
     /* 新一批数据带新的签名 URL，旧图片缓存与在途请求一并清掉 */
     ImageLoaderReset();
     sErrorText = nil;
+
+    /* 特别关注两段式：没有 gid 时先请求 /api/config/list 解析，
+       拿到 gid 后由 WeiboGidDelegate 回调 StartFeedRequest 继续拉流。 */
+    if (sFeed == 3 && (!sSpecialGid || [sSpecialGid length] == 0)) {
+        StartSpecialGidRequest();
+        return;
+    }
     StartFeedRequest();
 }
 

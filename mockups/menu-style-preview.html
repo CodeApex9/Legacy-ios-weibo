@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>汉堡菜单拟物化方案预览</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: #f0efec;
+    color: #2c2a28;
+    padding: 36px 40px 56px;
+  }
+  .head { max-width: 1320px; margin: 0 auto 26px; }
+  .head h1 { font-size: 22px; font-weight: 700; letter-spacing: .5px; }
+  .head p { margin-top: 8px; font-size: 13px; color: #6d6862; line-height: 1.7; }
+  .head .tag {
+    display: inline-block; margin-top: 10px; padding: 3px 10px; border-radius: 10px;
+    background: #e7e2d8; color: #6a5f4d; font-size: 12px;
+  }
+  .grid {
+    max-width: 1320px; margin: 0 auto;
+    display: grid; grid-template-columns: repeat(2, 400px); gap: 34px 48px;
+    justify-content: center;
+  }
+  .item { }
+  .label { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+  .label b { font-size: 15px; }
+  .label span { font-size: 12px; color: #8a857e; }
+  .badge {
+    font-size: 11px; padding: 2px 7px; border-radius: 8px;
+    background: #24476f; color: #f4efe4; margin-left: auto;
+  }
+  .badge.gray { background: #d9d5cd; color: #6b665f; }
+
+  /* ---------- 手机壳 ---------- */
+  .phone {
+    width: 400px; height: 710px; border-radius: 26px; padding: 0;
+    background: #111; box-shadow: 0 10px 26px rgba(0,0,0,.18), 0 2px 6px rgba(0,0,0,.12);
+    overflow: hidden; position: relative;
+  }
+  .screen {
+    width: 320px; height: 568px; position: absolute; top: 0; left: 0;
+    transform: scale(1.25); transform-origin: top left; overflow: hidden;
+    background: #eee9e0;
+  }
+  /* 状态栏 */
+  .status {
+    height: 20px; background: linear-gradient(#2f5a8c, #1d3d63);
+    color: #fff; font-size: 10px; display: flex; align-items: center; padding: 0 6px;
+    position: relative; z-index: 30;
+  }
+  .status .right { margin-left: auto; letter-spacing: 1px; }
+  /* 导航条：深蓝皮革 + 缝线 */
+  .nav {
+    height: 52px; position: relative; z-index: 30;
+    background:
+      radial-gradient(120% 90% at 50% -20%, rgba(255,255,255,.20), rgba(255,255,255,0) 60%),
+      linear-gradient(#4f7dae 0%, #31567f 42%, #1f3a5b 100%);
+    box-shadow: 0 1px 0 rgba(255,255,255,.28) inset, 0 -1px 0 rgba(0,0,0,.45) inset;
+  }
+  .nav:after {
+    content: ""; position: absolute; inset: 4px; border-radius: 4px;
+    border: 1px dashed rgba(246,238,221,.38); pointer-events: none;
+  }
+  .avatar {
+    position: absolute; left: 9px; top: 13px; width: 26px; height: 26px; border-radius: 50%;
+    background: linear-gradient(140deg, #6f7378, #2c2f33);
+    border: 1px solid rgba(255,255,255,.35);
+    box-shadow: 0 1px 2px rgba(0,0,0,.5);
+  }
+  /* 三段凹槽 */
+  .seg {
+    position: absolute; left: 68px; top: 12px; width: 184px; height: 28px;
+    border-radius: 6px;
+    background: linear-gradient(#16304d, #22456b 55%, #2c557f);
+    box-shadow: 0 1px 0 rgba(255,255,255,.18), 0 -1px 3px rgba(0,0,0,.55) inset;
+    display: flex;
+  }
+  .seg .cell {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 700; color: #cfe0f1;
+    text-shadow: 0 1px 0 rgba(0,0,0,.45);
+  }
+  .seg .cell.on {
+    color: #fff;
+    background: linear-gradient(#9dc2e6, #6795c4 45%, #3d6b9e 100%);
+    border-radius: 6px;
+    box-shadow: 0 1px 0 rgba(255,255,255,.7) inset, 0 0 0 1px rgba(20,44,72,.55), 0 1px 3px rgba(0,0,0,.35);
+  }
+  /* 汉堡按钮：三种样式 */
+  .ham { position: absolute; left: 280px; top: 11px; width: 30px; height: 30px; border-radius: 50%; }
+  .ham i { position: absolute; left: 8px; width: 14px; height: 2px; border-radius: 1px; }
+  .ham i:nth-child(1) { top: 11px; } .ham i:nth-child(2) { top: 15px; } .ham i:nth-child(3) { top: 19px; }
+  /* 现状：哑光灰 */
+  .ham.gray { background: linear-gradient(#4a4a4a, #333); box-shadow: 0 0 0 1px rgba(0,0,0,.45), 0 1px 2px rgba(0,0,0,.4); }
+  .ham.gray i { background: #b9b9bb; }
+  /* 方案：皮革深蓝 + 缝线环 */
+  .ham.leather {
+    background:
+      radial-gradient(70% 60% at 40% 18%, rgba(255,255,255,.22), rgba(255,255,255,0) 70%),
+      linear-gradient(#37597f, #1d3550 70%, #132538);
+    box-shadow: 0 0 0 1px #0a1520, 0 1px 2px rgba(0,0,0,.55);
+  }
+  .ham.leather:after {
+    content: ""; position: absolute; inset: 3px; border-radius: 50%;
+    border: 1px dashed rgba(243,234,215,.42);
+  }
+  .ham.leather i { background: #f3ead8; box-shadow: 0 1px 0 rgba(0,0,0,.5); }
+  /* 纸卡 */
+  .ham.paper {
+    background: linear-gradient(#fffdf6, #efe6d2);
+    box-shadow: 0 0 0 1px #c3b393, 0 1px 2px rgba(0,0,0,.3);
+  }
+  .ham.paper:after { content: ""; position: absolute; inset: 3px; border-radius: 50%; border: 1px dashed #c9b897; }
+  .ham.paper i { background: #7a6a52; }
+
+  /* ---------- 内容 ---------- */
+  .body { position: absolute; inset: 72px 0 0 0; background:
+      repeating-linear-gradient(0deg, rgba(0,0,0,.022) 0 1px, transparent 1px 4px),
+      repeating-linear-gradient(90deg, rgba(0,0,0,.022) 0 1px, transparent 1px 4px),
+      #eee9e0;
+  }
+  .card {
+    margin: 10px; padding: 9px; background: #fdfbf5; border-radius: 6px;
+    border: 1px solid #d9d2c4; box-shadow: 0 1px 2px rgba(0,0,0,.06);
+    display: flex; gap: 8px;
+  }
+  .card .pp { width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(140deg,#8b8f94,#3a3d41); flex: none; }
+  .card .txt { flex: 1; }
+  .card .n { font-size: 12px; font-weight: 700; color: #2f2b26; }
+  .card .t { margin-top: 3px; font-size: 11px; color: #4b463f; line-height: 1.5; }
+  .card .img { margin-top: 6px; height: 64px; border-radius: 4px;
+    background: linear-gradient(135deg, #cfd8e2, #8fa0b3 45%, #5c6b7d); }
+  .card .img.b { background: linear-gradient(135deg, #e2d3c6, #b99d87 50%, #7c6450); }
+
+  /* ---------- 遮罩 + 菜单 ---------- */
+  .scrim { position: absolute; inset: 0; background: rgba(0,0,0,.42); z-index: 40; }
+  .menu { position: absolute; left: 108px; top: 54px; width: 200px; z-index: 50; }
+  .menu .row {
+    height: 40px; margin: 0 10px; display: flex; align-items: center; justify-content: center;
+    font-size: 15px; font-weight: 700; border-radius: 20px;
+  }
+  .menu .gap { height: 6px; }
+
+  /* 方案 A：深蓝皮革 */
+  .menu.a { padding: 8px 0 6px; border-radius: 10px;
+    background:
+      radial-gradient(120% 80% at 50% -10%, rgba(255,255,255,.10), rgba(255,255,255,0) 55%),
+      linear-gradient(#1d2f49, #101c2d);
+    box-shadow: 0 0 0 1px #050b14, 0 10px 22px rgba(0,0,0,.45);
+  }
+  .menu.a:before { content: ""; position: absolute; inset: 4px; border-radius: 7px;
+    border: 1px dashed rgba(244,236,219,.34); pointer-events: none; }
+  .menu.a .row { color: #f1e9d8; text-shadow: 0 1px 0 rgba(0,0,0,.55); }
+  .menu.a .row.on {
+    color: #fffdf7;
+    background: linear-gradient(#9dc2e6, #5f8dbc 45%, #37639a);
+    box-shadow: 0 1px 0 rgba(255,255,255,.75) inset, 0 0 0 1px rgba(15,34,56,.7), 0 2px 4px rgba(0,0,0,.4);
+  }
+
+  /* 方案 B：米色纸卡 */
+  .menu.b { padding: 8px 0 6px; border-radius: 10px;
+    background: linear-gradient(#fffdf6, #f4ebda);
+    box-shadow: 0 0 0 1px #c0b192, 0 8px 18px rgba(0,0,0,.35);
+  }
+  .menu.b:before { content: ""; position: absolute; inset: 4px; border-radius: 7px;
+    border: 1px dashed #c8b795; pointer-events: none; }
+  .menu.b .row { color: #4c4030; text-shadow: 0 1px 0 rgba(255,255,255,.6); }
+  .menu.b .row.on { color: #fdf8ee;
+    background: linear-gradient(#7ba5d6, #466f9f 48%, #27486f);
+    box-shadow: 0 1px 0 rgba(255,255,255,.6) inset, 0 0 0 1px rgba(16,36,58,.6), 0 2px 4px rgba(0,0,0,.3);
+  }
+
+  /* 方案 C：导航条同款玻璃浮层 */
+  .menu.c { padding: 8px 0 6px; border-radius: 10px;
+    background:
+      radial-gradient(120% 80% at 50% -10%, rgba(255,255,255,.22), rgba(255,255,255,0) 55%),
+      linear-gradient(rgba(55,86,121,.97), rgba(24,44,68,.97));
+    box-shadow: 0 0 0 1px rgba(6,14,24,.8), 0 10px 22px rgba(0,0,0,.45), 0 1px 0 rgba(255,255,255,.25) inset;
+  }
+  .menu.c:before { content: ""; position: absolute; inset: 4px; border-radius: 7px;
+    border: 1px dashed rgba(246,238,221,.4); pointer-events: none; }
+  .menu.c .row { color: #eaf1f8; text-shadow: 0 1px 0 rgba(0,0,0,.5); }
+  .menu.c .row.on { color: #2c3f58; text-shadow: 0 1px 0 rgba(255,255,255,.8);
+    background: linear-gradient(#fffdf6, #efe3cb);
+    box-shadow: 0 1px 0 rgba(255,255,255,.9) inset, 0 0 0 1px rgba(120,101,74,.55), 0 2px 4px rgba(0,0,0,.3);
+  }
+
+  /* 说明 */
+  .notes { margin-top: 12px; font-size: 12px; color: #6f6a63; line-height: 1.75; }
+  .notes b { color: #3d3a36; font-weight: 600; }
+  .btnrow { max-width: 1320px; margin: 30px auto 0; display: flex; gap: 34px; align-items: center; justify-content: center; }
+  .btnrow .cap { font-size: 12px; color: #7c7770; text-align: center; margin-top: 8px; }
+  .btnrow .cell { display: flex; flex-direction: column; align-items: center; }
+  .ham-lg { position: relative; width: 60px; height: 60px; border-radius: 50%; }
+  .ham-lg i { position: absolute; left: 16px; width: 28px; height: 4px; border-radius: 2px; }
+  .ham-lg i:nth-child(1) { top: 22px; } .ham-lg i:nth-child(2) { top: 30px; } .ham-lg i:nth-child(3) { top: 38px; }
+  .foot { max-width: 1320px; margin: 34px auto 0; padding-top: 18px; border-top: 1px solid #ddd8cf;
+    font-size: 12px; color: #7a756e; line-height: 1.9; }
+  .foot b { color: #3e3a35; }
+</style>
+</head>
+<body>
+
+<div class="head">
+  <h1>汉堡菜单 · 拟物化改版预览</h1>
+  <p>目标是让下拉菜单融入现有 V0.3 皮肤：皮革缝线、深蓝凹槽、玻璃高光胶囊、米色纸卡、亚麻底。下面是现状与三个方案的同屏对比（真实尺寸 320×568，按 1.25 倍展示）。</p>
+  <div class="tag">预览稿 · 未改动 app 代码</div>
+</div>
+
+<div class="grid">
+
+  <!-- 现状 -->
+  <div class="item">
+    <div class="label"><b>现状</b><span>哑光灰圆钮 + 半透明灰面板</span><span class="badge gray">待替换</span></div>
+    <div class="phone"><div class="screen">
+      <div class="status"><span>中国移动</span><span class="right">17:09</span></div>
+      <div class="nav">
+        <div class="avatar"></div>
+        <div class="seg"><div class="cell">热门</div><div class="cell">关注</div><div class="cell on">我的</div></div>
+        <div class="ham gray"><i></i><i></i><i></i></div>
+      </div>
+      <div class="body">
+        <div class="card"><div class="pp"></div><div class="txt"><div class="n">我为韩剧狂</div><div class="t">《非常完美》新一期也太好笑了吧！</div><div class="img"></div></div></div>
+        <div class="card"><div class="pp"></div><div class="txt"><div class="n">HypeMaster</div><div class="t">机械浪漫 · 电脑壁纸合集</div><div class="img b"></div></div></div>
+      </div>
+      <div class="scrim"></div>
+      <div class="menu" style="background:rgba(33,33,36,.94);border-radius:10px;padding:8px 0 6px;">
+        <div class="row" style="color:#fff;">我的</div>
+        <div class="row" style="background:#fff;color:#222;">特别关注</div>
+        <div class="row" style="color:#fff;">美图</div>
+        <div class="row" style="color:#fff;">壁纸</div>
+      </div>
+    </div></div>
+    <div class="notes">
+      问题：<b>纯白胶囊</b>和灰色面板跟蓝色皮革导航条、米色亚麻列表完全不在一个材质体系里，像系统控件贴上去的。
+    </div>
+  </div>
+
+  <!-- 方案 A -->
+  <div class="item">
+    <div class="label"><b>方案 A · 深蓝皮革下拉卡</b><span>最贴合导航条</span><span class="badge">推荐</span></div>
+    <div class="phone"><div class="screen">
+      <div class="status"><span>中国移动</span><span class="right">17:09</span></div>
+      <div class="nav">
+        <div class="avatar"></div>
+        <div class="seg"><div class="cell">热门</div><div class="cell">关注</div><div class="cell on">我的</div></div>
+        <div class="ham leather"><i></i><i></i><i></i></div>
+      </div>
+      <div class="body">
+        <div class="card"><div class="pp"></div><div class="txt"><div class="n">我为韩剧狂</div><div class="t">《非常完美》新一期也太好笑了吧！</div><div class="img"></div></div></div>
+        <div class="card"><div class="pp"></div><div class="txt"><div class="n">HypeMaster</div><div class="t">机械浪漫 · 电脑壁纸合集</div><div class="img b"></div></div></div>
+      </div>
+      <div class="scrim"></div>
+      <div class="menu a">
+        <div class="row">我的</div>
+        <div class="row on">特别关注</div>
+        <div class="row">美图</div>
+        <div class="row">壁纸</div>
+      </div>
+    </div></div>
+    <div class="notes">
+      面板 = <b>深蓝皮革 + 内圈缝线</b>，与导航条同一材质；条目奶油白带 1px 压痕。<br>
+      选中态 = <b>三段浮块同款玻璃胶囊</b>（上亮下暗 + 内高光 + 深色描边），和顶部分段控件形成呼应。<br>
+      汉堡钮 = 皮革圆 + 缝线环 + 奶油色三横线，不再是灰塑料。
+    </div>
+  </div>
+
+  <!-- 方案 B -->
+  <div class="item">
+    <div class="label"><b>方案 B · 米色纸卡菜单</b><span>像一张便签纸</span></div>
+    <div class="phone"><div class="screen">
+      <div class="status"><span>中国移动</span><span class="right">17:09</span></div>
+      <div class="nav">
+        <div class="avatar"></div>
+        <div class="seg"><div class="cell">热门</div><div class="cell">关注</div><div class="cell on">我的</div></div>
+        <div class="ham paper"><i></i><i></i><i></i></div>
+      </div>
+      <div class="body">
+        <div class="card"><div class="pp"></div><div class="txt"><div class="n">我为韩剧狂</div><div class="t">《非常完美》新一期也太好笑了吧！</div><div class="img"></div></div></div>
+        <div class="card"><div class="pp"></div><div class="txt"><div class="n">HypeMaster</div><div class="t">机械浪漫 · 电脑壁纸合集</div><div class="img b"></div></div></div>
+      </div>
+      <div class="scrim"></div>
+      <div class="menu b">
+        <div class="row">我的</div>
+        <div class="row on">特别关注</div>
+        <div class="row">美图</div>
+        <div class="row">壁纸</div>
+      </div>
+    </div></div>
+    <div class="notes">
+      面板 = <b>米色纸卡 + 缝线边</b>（复用卡片语言），文字深褐、带纸面压印感。<br>
+      选中态 = <b>深蓝胶囊</b>，与「退出登录」同族的立体按钮，对比强烈、可读性好。<br>
+      缺点：和一个白色微博卡片叠在一起时，层次容易糊；也需要更重的投影把它托起来。
+    </div>
+  </div>
+
+  <!-- 方案 C -->
+  <div class="item">
+    <div class="label"><b>方案 C · 导航条玻璃浮层</b><span>选中项反白</span></div>
+    <div class="phone"><div class="screen">
+      <div class="status"><span>中国移动</span><span class="right">17:09</span></div>
+      <div class="nav">
+        <div class="avatar"></div>
+        <div class="seg"><div class="cell">热门</div><div class="cell">关注</div><div class="cell on">我的</div></div>
+        <div class="ham leather"><i></i><i></i><i></i></div>
+      </div>
+      <div class="body">
+        <div class="card"><div class="pp"></div><div class="txt"><div class="n">我为韩剧狂</div><div class="t">《非常完美》新一期也太好笑了吧！</div><div class="img"></div></div></div>
+        <div class="card"><div class="pp"></div><div class="txt"><div class="n">HypeMaster</div><div class="t">机械浪漫 · 电脑壁纸合集</div><div class="img b"></div></div></div>
+      </div>
+      <div class="scrim"></div>
+      <div class="menu c">
+        <div class="row">我的</div>
+        <div class="row on">特别关注</div>
+        <div class="row">美图</div>
+        <div class="row">壁纸</div>
+      </div>
+    </div></div>
+    <div class="notes">
+      面板 = <b>导航条渐变 + 半透明</b>，像从导航条上拉下来的一块皮革；缝线更亮。<br>
+      选中态 = <b>米色纸胶囊 + 深蓝字</b>，和深色底反差最大，最有「实体按键」感。<br>
+      缺点：面板接近不透光，遮罩变重时略显压抑；字号需再压一档才不显挤。
+    </div>
+  </div>
+
+</div>
+
+<div class="btnrow">
+  <div class="cell"><div class="ham-lg ham gray" style="position:relative;"><i></i><i></i><i></i></div><div class="cap">现状（灰塑料）</div></div>
+  <div class="cell"><div class="ham-lg ham leather" style="position:relative;"><i></i><i></i><i></i></div><div class="cap">A / C（皮革 + 缝线环）</div></div>
+  <div class="cell"><div class="ham-lg ham paper" style="position:relative;"><i></i><i></i><i></i></div><div class="cap">B（纸卡）</div></div>
+</div>
+
+<div class="foot">
+  <b>实现方式</b>（选定后落地，均为现有能力，无需引入新框架）：<br>
+  · 面板底色/渐变用位图或 CAGradientLayer 绘制，圆角沿用 <code>RoundView</code>，缝线沿用 <code>AddStitchBorder</code>（纸卡/导航条同一套）；<br>
+  · 选中胶囊直接复用 <code>SegBlock</code> 亮蓝玻璃渐变（方案 A）或 <code>BtnNavy</code> 立体胶囊（方案 B），尺寸按 36→40pt 重新出图，避免九宫格平铺「双下巴」；<br>
+  · 汉堡钮按 30pt 出一张 <code>MenuBtn</code> 位图（三套皮肤各一张，与 <code>BtnNavy</code> 同批生成）；<br>
+  · 交互不变：遮罩点击收起、选中项白/蓝胶囊高亮、分组列表异步到达后重建。
+</div>
+
+</body>
+</html>

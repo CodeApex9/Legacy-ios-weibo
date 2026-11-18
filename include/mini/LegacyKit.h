@@ -32,6 +32,18 @@ typedef struct objc_class    *Class;
 
 typedef int           NSInteger;
 typedef unsigned int  NSUInteger;
+
+/* NSRange：字符串查找/截取用。自己定义（Foundation 的 NSRect 系列在 mini
+   stub 里没有头文件，只需结构布局正确，无需符号）。 */
+typedef struct _NSRange {
+    NSUInteger location;
+    NSUInteger length;
+} NSRange;
+
+#define NSRangeMake(loc, len) ((NSRange){(NSUInteger)(loc), (NSUInteger)(len)})
+
+#define NSUTF8StringEncoding 4      /* 纯常量，无符号依赖 */
+#define NSASCIIStringEncoding 1
 typedef float         CGFloat;
 
 typedef struct { CGFloat x; CGFloat y; } CGPoint;
@@ -109,7 +121,17 @@ extern const CGAffineTransform CGAffineTransformIdentity;
 - (BOOL)hasPrefix:(NSString *)prefix;
 - (float)floatValue;
 - (int)intValue;
+- (NSRange)rangeOfString:(NSString *)string;
+- (NSRange)rangeOfString:(NSString *)string options:(NSUInteger)mask range:(NSRange)range;
+- (NSString *)substringWithRange:(NSRange)range;
+- (BOOL)hasSuffix:(NSString *)suffix;
+- (id)initWithData:(id)data encoding:(NSUInteger)encoding;   /* NSData 在后文声明，这里用 id */
 @end
+
+static inline NSRange NSMakeRange(NSUInteger loc, NSUInteger len)
+{
+    NSRange r; r.location = loc; r.length = len; return r;
+}
 
 @interface NSMutableString : NSString
 - (void)appendString:(NSString *)other;
@@ -133,6 +155,8 @@ extern const CGAffineTransform CGAffineTransformIdentity;
 + (NSArray *)arrayWithObject:(id)obj;
 - (NSUInteger)count;
 - (id)objectAtIndex:(NSUInteger)index;
+- (BOOL)containsObject:(id)obj;
+- (NSUInteger)indexOfObject:(id)obj;
 @end
 
 #define NSNotFound ((NSInteger)-1)
@@ -140,6 +164,9 @@ extern const CGAffineTransform CGAffineTransformIdentity;
 @interface NSMutableArray : NSArray
 - (void)addObject:(id)obj;
 - (void)addObjectsFromArray:(NSArray *)other;
+- (void)removeObjectAtIndex:(NSUInteger)index;
+- (void)removeObject:(id)obj;
+- (void)removeAllObjects;
 @end
 
 @interface NSDictionary : NSObject
@@ -220,6 +247,10 @@ NSString *NSHomeDirectory(void);
      startImmediately:(BOOL)startNow;
 - (void)start;
 - (void)cancel;
+/* 同步请求：探针/诊断用。真实符号在 CFNetwork，tbd 已登记 */
++ (NSData *)sendSynchronousRequest:(NSURLRequest *)request
+                 returningResponse:(NSHTTPURLResponse **)response
+                             error:(id)error;
 @end
 
 @interface NSJSONSerialization : NSObject
@@ -254,6 +285,7 @@ NSString *NSStringFromClass(Class cls);
 @interface UIView : UIResponder
 - (id)initWithFrame:(CGRect)frame;
 - (void)addSubview:(UIView *)view;
+- (void)insertSubview:(UIView *)view atIndex:(NSInteger)index;   /* 菜单缝线层垫底 */
 - (void)removeFromSuperview;
 - (void)setBackgroundColor:(id)color;
 - (void)setFrame:(CGRect)frame;
@@ -267,6 +299,7 @@ NSString *NSStringFromClass(Class cls);
 - (NSInteger)tag;
 - (id)viewWithTag:(NSInteger)tag;
 - (id)superview;
+- (NSArray *)subviews;                        /* 汉堡菜单重建条目时清空用 */
 - (id)layer;                                  /* CALayer；只做消息发送，无需链接 QuartzCore */
 - (void)setContentMode:(NSInteger)mode;
 - (void)setClipsToBounds:(BOOL)flag;

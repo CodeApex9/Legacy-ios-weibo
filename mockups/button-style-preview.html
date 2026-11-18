@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>按钮统一汉堡圆钮风格 · 效果图</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    background: #f0efec; color: #2c2a28; padding: 34px 40px 60px;
+  }
+  .head { max-width: 1240px; margin: 0 auto 26px; }
+  .head h1 { font-size: 22px; font-weight: 700; letter-spacing: .5px; }
+  .head p { margin-top: 8px; font-size: 13px; color: #6d6862; line-height: 1.75; }
+  .tag { display: inline-block; margin-top: 10px; padding: 3px 10px; border-radius: 10px;
+         background: #e7e2d8; color: #6a5f4d; font-size: 12px; }
+  .sec { max-width: 1240px; margin: 30px auto 0; }
+  .sec h2 { font-size: 16px; font-weight: 700; margin-bottom: 14px; color: #3a3733; }
+  .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+  .card { background: #fff; border: 1px solid #e3dfd7; border-radius: 12px; padding: 16px; }
+  .card .t { font-size: 13px; font-weight: 700; margin-bottom: 3px; }
+  .card .s { font-size: 11px; color: #8a857e; margin-bottom: 14px; }
+  .card.now { border-color: #d9d5cd; }
+  .card.rec { border: 2px solid #24476f; padding: 15px; }
+  .rec-badge { float: right; font-size: 10px; padding: 2px 8px; border-radius: 8px;
+               background: #24476f; color: #f4efe4; }
+
+  /* 模拟导航条（深蓝皮革，与真机一致） */
+  .nav {
+    height: 52px; border-radius: 5px; position: relative; overflow: hidden;
+    background: linear-gradient(180deg,#1e3248 0%,#172738 35%,#101d2d 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.14), inset 0 -1px 0 rgba(0,0,0,.5);
+  }
+  .nav::before {
+    content: ""; position: absolute; inset: 4px; border: 1px dashed rgba(188,176,148,.75);
+    border-radius: 3px; pointer-events: none;
+  }
+  .nav .ttl { position: absolute; left: 0; right: 0; top: 14px; text-align: center;
+              color: #fff; font-size: 15px; font-weight: 700;
+              text-shadow: 0 -1px 0 rgba(0,0,0,.6); }
+  .nav .pos { position: absolute; top: 0; height: 52px; display: flex; align-items: center; }
+  .nav .l { left: 8px; } .nav .r { right: 8px; }
+
+  /* 场景底：正文纸卡 / 账号皮革面板 */
+  .scene-detail { background: #f3efe7; border-radius: 5px; padding: 0; }
+  .scene-panel  { background: linear-gradient(180deg,#16283c,#0f1c2c); border-radius: 5px; padding: 0; }
+  .strip { height: 78px; position: relative; display: flex; align-items: center; padding: 0 8px; }
+  .strip .cap { position: absolute; right: 8px; bottom: 4px; font-size: 9px; color: rgba(255,255,255,.5); }
+  .strip.detail-cap .cap { color: #a9a49b; }
+  .strip .mid { margin-left: 8px; color: #f4efe4; font-size: 13px; font-weight: 700;
+                text-shadow: 0 -1px 0 rgba(0,0,0,.5); }
+  .strip .mid.dark { color: #3a3733; text-shadow: 0 1px 0 #fff; }
+
+  /* ---------- 现状：亮蓝立体胶囊 ---------- */
+  .pill-navy {
+    background: linear-gradient(180deg,#76a3d8 0%,#5280ba 13%,#37639b 55%,#1d3d69 100%);
+    border-radius: 13px; color: #fff; font-weight: 700; font-size: 12px;
+    height: 26px; min-width: 60px; padding: 0 12px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.5), inset 0 -1px 0 rgba(0,0,0,.3),
+                0 1px 3px rgba(0,0,0,.4);
+    display: inline-flex; align-items: center; justify-content: center;
+    text-shadow: 0 -1px 0 rgba(0,0,0,.3);
+  }
+  .pill-red {
+    background: linear-gradient(180deg,#ee948b 0%,#d16058 13%,#b13b33 55%,#7f1d18 100%);
+    border-radius: 13px; color: #fff; font-weight: 700; font-size: 12px;
+    height: 30px; min-width: 84px; padding: 0 12px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 -1px 0 rgba(0,0,0,.3),
+                0 1px 3px rgba(0,0,0,.4);
+    display: inline-flex; align-items: center; justify-content: center;
+    text-shadow: 0 -1px 0 rgba(0,0,0,.3);
+  }
+
+  /* ---------- 汉堡同款：皮革圆钮 ---------- */
+  .leather-btn {
+    width: 44px; height: 44px; border-radius: 50%; position: relative; flex: none;
+    background: linear-gradient(180deg,#3b587a 0%,#213852 45%,#132538 100%);
+    border: 1px solid #0a1622;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.2), inset 0 -1px 0 rgba(0,0,0,.6),
+                0 1px 3px rgba(0,0,0,.45);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .leather-btn::before {
+    content: ""; position: absolute; inset: 3px; border: 1px dashed #bcb094; border-radius: 50%;
+  }
+  .leather-btn .lines { display: flex; flex-direction: column; gap: 4px; }
+  .leather-btn .lines i { display: block; width: 18px; height: 2px; border-radius: 2px; background: #f3ead8; }
+  .leather-btn .arrow { color: #f3ead8; font-size: 24px; font-weight: 300; line-height: 1;
+                        transform: translateY(-1px); }
+  .leather-btn .glyph { color: #f3ead8; font-size: 15px; font-weight: 400; line-height: 1; }
+  .leather-btn.sm { width: 40px; height: 40px; }
+  .leather-btn.sm .arrow { font-size: 22px; }
+  .leather-btn.logout { width: 46px; height: 46px; }
+  .leather-btn.logout .glyph { font-size: 18px; }
+
+  .legend { max-width: 1240px; margin: 20px auto 0; font-size: 12px; color: #6d6862; line-height: 1.9; }
+  .legend b { color: #3a3733; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+                vertical-align: -1px; margin-right: 4px; }
+  .note { max-width: 1240px; margin: 18px auto 0; padding: 14px 18px; background: #fff;
+          border: 1px solid #e3dfd7; border-radius: 10px; font-size: 12px; color: #6d6862; line-height: 1.8; }
+  .note b { color: #24476f; }
+  .pair { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .divider { height: 1px; background: #e3dfd7; margin: 12px 0; }
+</style>
+</head>
+<body>
+<div class="head">
+  <h1>按钮统一为「汉堡圆钮」风格 · 效果图</h1>
+  <p>把 <b>微博正文返回</b>、<b>账号面板返回</b>、<b>退出登录</b> 三个按钮，从现在的亮蓝/红色立体胶囊，改成与右上角汉堡菜单按钮完全同款：<b>深蓝皮革渐变圆底 + 奶油虚线缝线环 + 奶油色内容</b>。下方先给现状对照，再给两套候选方案。</p>
+  <span class="tag">仅效果图 · 未改任何代码</span>
+</div>
+
+<div class="sec">
+  <h2>现状（真机最新截图所见）</h2>
+  <div class="row">
+    <div class="card now">
+      <div class="t">正文页返回</div><div class="s">亮蓝立体胶囊 · 60×26pt</div>
+      <div class="nav"><span class="pos l"><span class="pill-navy">返回</span></span><span class="ttl">微博正文</span></div>
+    </div>
+    <div class="card now">
+      <div class="t">账号面板返回</div><div class="s">亮蓝立体胶囊 · 60×26pt</div>
+      <div class="scene-panel"><div class="strip"><span class="pill-navy">返回</span><span class="mid">账号信息</span><span class="cap">皮革面板</span></div></div>
+    </div>
+    <div class="card now">
+      <div class="t">退出登录</div><div class="s">红色立体胶囊 · 92×36pt</div>
+      <div class="scene-panel"><div class="strip" style="justify-content:flex-end"><span class="pill-red">退出登录</span><span class="cap">面板底部</span></div></div>
+    </div>
+    <div class="card now">
+      <div class="t">汉堡菜单按钮（目标样式）</div><div class="s">深蓝皮革圆钮 · 30pt</div>
+      <div class="nav"><span class="pos r"><span class="leather-btn sm"><span class="lines"><i></i><i></i><i></i></span></span></span></div>
+      <div style="font-size:11px;color:#8a857e;margin-top:12px;line-height:1.7">深蓝渐变 + 深色描边 + 奶油虚线缝线环 + 奶油三横线</div>
+    </div>
+  </div>
+</div>
+
+<div class="sec">
+  <h2>方案 A（推荐）· 全图标圆钮，和汉堡钮完全同构</h2>
+  <div class="row">
+    <div class="card rec">
+      <span class="rec-badge">推荐</span>
+      <div class="t">正文页返回</div><div class="s">44pt 皮革圆钮 + 奶油箭头 ‹</div>
+      <div class="nav"><span class="pos l"><span class="leather-btn"><span class="arrow">‹</span></span></span><span class="ttl">微博正文</span><span class="pos r"><span class="leather-btn sm"><span class="lines"><i></i><i></i><i></i></span></span></span></div>
+    </div>
+    <div class="card rec">
+      <span class="rec-badge">推荐</span>
+      <div class="t">账号面板返回</div><div class="s">44pt 皮革圆钮 + 奶油箭头 ‹</div>
+      <div class="scene-panel"><div class="strip"><span class="leather-btn"><span class="arrow">‹</span></span><span class="mid">账号信息</span><span class="cap">与正文返回同款</span></div></div>
+    </div>
+    <div class="card rec">
+      <span class="rec-badge">推荐</span>
+      <div class="t">退出登录</div><div class="s">46pt 皮革圆钮 + 奶油门形符号 ⏻</div>
+      <div class="scene-panel"><div class="strip" style="justify-content:flex-end"><span class="leather-btn logout"><span class="glyph">⏻</span></span><span class="cap">面板底部</span></div></div>
+    </div>
+    <div class="card rec">
+      <span class="rec-badge">推荐</span>
+      <div class="t">整体观感</div><div class="s">导航条上三颗同源圆钮</div>
+      <div class="nav"><span class="pos l"><span class="leather-btn"><span class="arrow">‹</span></span></span><span class="ttl">首页</span><span class="pos r"><span class="leather-btn sm"><span class="lines"><i></i><i></i><i></i></span></span></span></div>
+      <div style="font-size:11px;color:#8a857e;margin-top:12px;line-height:1.7">左返回、右菜单，同一块皮革、同一圈缝线，视觉彻底统一。</div>
+    </div>
+  </div>
+</div>
+
+<div class="sec">
+  <h2>方案 B · 保留文字，换成皮革缝线胶囊</h2>
+  <div class="row">
+    <div class="card">
+      <div class="t">正文页返回</div><div class="s">皮革胶囊 + 奶油「返回」二字</div>
+      <div class="nav"><span class="pos l"><span class="leather-btn" style="width:64px;height:32px;border-radius:16px"><span class="glyph" style="font-size:12px">返回</span></span></span><span class="ttl">微博正文</span></div>
+    </div>
+    <div class="card">
+      <div class="t">账号面板返回</div><div class="s">皮革胶囊 + 奶油「返回」</div>
+      <div class="scene-panel"><div class="strip"><span class="leather-btn" style="width:64px;height:32px;border-radius:16px"><span class="glyph" style="font-size:12px">返回</span></span><span class="mid">账号信息</span></div></div>
+    </div>
+    <div class="card">
+      <div class="t">退出登录</div><div class="s">皮革胶囊 + 奶油「退出」</div>
+      <div class="scene-panel"><div class="strip" style="justify-content:flex-end"><span class="leather-btn" style="width:76px;height:36px;border-radius:18px"><span class="glyph" style="font-size:12px">退出登录</span></span></div></div>
+    </div>
+    <div class="card">
+      <div class="t">特点</div><div class="s">可读性优先 · 语义明确</div>
+      <div style="font-size:11px;color:#6d6862;line-height:1.8;margin-top:8px">圆角胶囊内嵌虚线缝线环，材质与汉堡一致但保留文字。退出登录失去红色警示色，改为奶油字（可加浅红描边区分）。</div>
+    </div>
+  </div>
+</div>
+
+<div class="legend">
+  <b>材质说明：</b>
+  <span class="sw" style="background:#213852"></span>深蓝皮革渐变（#3b587a→#132538，与汉堡钮同源）
+  &nbsp; <span class="sw" style="background:#bcb094"></span>奶油虚线缝线环（#bcb094）
+  &nbsp; <span class="sw" style="background:#f3ead8"></span>奶油内容（#f3ead8）
+  &nbsp; <span class="sw" style="background:#0a1622"></span>1px 深色描边 + 内高光/底暗线
+</div>
+
+<div class="note">
+  <b>推荐方案 A 的理由：</b>三个按钮变成和汉堡钮一模一样的材质与几何（圆形 + 缝线环 + 奶油符号），导航条左（返回）右（菜单）成对，账号面板里也是同一套，整个 app 的按钮语言彻底统一。<br>
+  <b>需要你确认的点：</b>① 选 A 还是 B；② 返回用箭头符号（‹）还是保留「返回」二字；③ 退出登录用符号（⏻）还是保留文字、是否保留一点红色警示色。确认后我再动手实现（新增对应位图 + 替换三处按钮样式）。
+</div>
+
+</body>
+</html>

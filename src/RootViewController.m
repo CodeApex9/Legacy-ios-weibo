@@ -3,7 +3,18 @@
 #import "ImageLoader.h"
 #import "WeiboLogin.h"
 #import "WeiboComments.h"
+#import "Skin.h"
+#import "AppDelegate.h"
 #import "Diag.h"
+
+#ifdef SKINCHECK
+/* mini SDK 无系统 C 头文件，按 WeiboStore.m 惯例手写 extern 声明。
+   只用 open/write/close/read（都在 -lSystem），不用 access/remove/stdio */
+extern int  open(const char *, int, ...);
+extern long write(int, const void *, unsigned long);
+extern long read(int, void *, unsigned long);
+extern int  close(int);
+#endif
 
 /*
  * A 版「系统原生蓝」热门流
@@ -36,6 +47,22 @@
 
 static UITableView  *sTableView = nil;
 static UILabel      *sStatusLabel = nil;
+/* 第三格的标题与数据流由槽位设置决定（WeiboStoreSlotKind），可以是
+   我的 / 特别关注 / 服务端任意分组；切换入口在导航栏右侧的汉堡菜单。 */
+static UIView       *sMenuOverlay = nil;   /* 汉堡菜单：全屏半透明遮罩 */
+static UIView       *sMenuPanel = nil;     /* 菜单面板（overlay 的子视图） */
+static UIView       *sMenuList = nil;      /* 条容器：重建时只清这里，缝线/底纹保留 */
+static UIView       *sMenuStitch = nil;    /* 缝线层：面板高度变化时重建 */
+static NSArray      *sMenuItems = nil;     /* 当前菜单条目 {kind, gid, name} */
+#ifdef SPECIALSHOT
+static int           sSpShotStage = 0;
+#endif
+#ifdef SPECIALCHECK
+static int           sSpChkStage = 0;
+#endif
+#ifdef MENUCHECK
+static int           sMenuChkStage = 0;   /* 汉堡菜单自检阶段 */
+#endif
 static UILabel      *sAccountLabel = nil;
 static UIImageView  *sAccountAvatar = nil;   /* 已登录：左上角圆形头像 */
 static UIButton     *sAccountHit = nil;      /* 账号区点击热区 */
@@ -45,15 +72,11 @@ static UIView       *sAccountShade = nil;
 static UIImageView  *sAccountBigAvatar = nil;
 static UILabel      *sAccountName = nil;
 static int           sAccountAnimating = 0;
-/* 三个 tab 自绘：深蓝槽 + 亮蓝浮块 + 三个 UILabel，命中用三个透明按钮。
-   不用 UISegmentedControl —— 它会在凹槽上自绘分隔线与 bevel（实测留下
-   0.5pt 竖线），并且分段背景图会被内部裁剪，几何不可控。自绘后外观完全
-   由我们决定，frame 与原来一致，位置不变。 */
-static UIImageView  *sSegGroove = nil;
-static UIImageView  *sSegBlock = nil;
-static UIView       *sTabHit = nil;                 /* 透明命中层容器 */
-static UILabel      *sTabLabels[3] = {nil, nil, nil};
-static int           sTabIndex = 0;                 /* 0 热门 1 关注 2 我的 */
+/* 主界面只显示一个流：由导航栏汉堡菜单决定。
+   sTabIndex 现在直接就是 feed id（0热门 1关注 2我的 3特别关注 4分组），
+   顶部只有一个标题 label 显示当前流名，不再有三个分段 tab。 */
+static UILabel      *sFeedTitle = nil;
+static int           sTabIndex = 0;                 /* = 当前 feed id */
 static NSArray      *sPosts = nil;
 static id            sSelf = nil;
 
@@ -83,46 +106,37 @@ static void SetLoadMoreLabel(void);
 
 /* RoundView 定义在下方，这里先声明（C 需先见声明） */
 static void RoundView(UIView *view, CGFloat radius);
+static void ProfileChanged(void);
+static void GroupsChanged(void);   /* 分组列表到达回调：重建打开中的菜单 */
 
-/* 按当前选中段，把亮蓝块移到该段位置（块四边留缝由图片透明边自动形成）。
-   段宽 = 槽宽/3，槽 frame 已知，纯算术，不动布局。 */
-static void layoutSegmentBlock(void)
+/* 菜单所选 = 当前 feed，二者已统一为同一编号，TabToFeed 退化为透传。
+   保留这个函数只是让自检里旧调用点不用大改。 */
+static int TabToFeed(int idx)
 {
-    CGRect f;
-    CGFloat segW;
-    int idx;
-    if (!sSegGroove || !sSegBlock) return;
-    f = [sSegGroove frame];
-    segW = CGRectGetWidth(f) / 3.0f;
-    idx = sTabIndex;
-    if (idx < 0 || idx > 2) idx = 0;
-    [sSegBlock setFrame:CGRectMake(f.origin.x + segW * (CGFloat)idx,
-                                   f.origin.y, segW, CGRectGetHeight(f))];
+    return (idx >= 0 && idx <= 4) ? idx : 0;
 }
 
-/* tab 文字：选中纯白、未选中淡蓝白，都带 1pt 向上投影压出刻痕感 */
-static void StyleTabLabel(UILabel *lab, int selected)
+/* 标题 = 当前流的名字（热门/关注/我的/特别关注/分组名） */
+static NSString *SlotTitle(void)
 {
-    if (!lab) return;
-    if (selected) {
-        [lab setTextColor:[UIColor whiteColor]];
-        [lab setShadowColor:[UIColor colorWithRed:0.05f green:0.14f blue:0.28f alpha:0.85f]];
-    } else {
-        [lab setTextColor:[UIColor colorWithRed:0.82f green:0.89f blue:0.97f alpha:1.0f]];
-        [lab setShadowColor:[UIColor colorWithRed:0.05f green:0.12f blue:0.24f alpha:0.75f]];
-    }
-    [lab setShadowOffset:CGSizeMake(0.0f, -1.0f)];
+    return WeiboStoreSlotName();
 }
 
-/* 静默切换：只移动浮块 + 换字色，不触发 feedChanged:。
-   与原先 setSelectedSegmentIndex: 的语义一致（程序设置不触发事件）。 */
+/* 顶部标题刷新：汉堡菜单选了什么，就把名字显示在这里。
+   左侧账号区占到 x=68，右侧汉堡钮从 w-40 起，标题夹在中间。 */
+static void RefreshFeedTitle(int feed)
+{
+    (void)feed;   /* 标题一律取当前流名（槽位与 feed 已统一） */
+    if (!sFeedTitle) return;
+    [(UILabel *)sFeedTitle setText:SlotTitle()];
+}
+
+/* 静默切换：只更新内部选中值 + 标题，不触发 feedChanged:。
+   浮块/字色那套已经随三个 tab 一起移除。 */
 static void SetTabIndex(int idx)
 {
-    int i;
-    if (idx < 0 || idx > 2) idx = 0;
-    sTabIndex = idx;
-    layoutSegmentBlock();
-    for (i = 0; i < 3; i++) StyleTabLabel(sTabLabels[i], i == idx);
+    sTabIndex = TabToFeed(idx);
+    RefreshFeedTitle(sTabIndex);
 }
 
 /* 加载提示跟当前 tab 联动：热门 / 关注 / 我的 */
@@ -285,9 +299,22 @@ static void RoundView(UIView *view, CGFloat radius)
    避免列表 / 正文 / 账号面板各自写死色值后出现色差。 */
 static UIColor *LinenColor(void)
 {
-    UIImage *tex = [UIImage imageNamed:@"Linen"];
+    UIImage *tex = [UIImage imageNamed:SkinImage(@"Linen")];
     if (tex) return [UIColor colorWithPatternImage:tex];
     return [UIColor colorWithRed:0.93f green:0.92f blue:0.90f alpha:1.0f];
+}
+
+/* 提醒事项皮肤：在页面左侧画一道淡红竖线（Reminders 点格纸的标志）。
+   只在皮肤 1 时加；V0.3 皮革皮肤保持原样。竖线放在内容层，不挡触摸。 */
+static void AddReminderRule(UIView *host, CGFloat h)
+{
+    UIView *rule;
+    if (SkinCurrent() != 1 || !host) return;
+    rule = [[UIView alloc] initWithFrame:CGRectMake(44.0f, 52.0f, 1.0f, h - 52.0f)];
+    [rule setBackgroundColor:[UIColor colorWithRed:0.91f green:0.65f blue:0.68f alpha:1.0f]];
+    [rule setUserInteractionEnabled:NO];
+    [host addSubview:rule];
+    [rule release];
 }
 
 /* 立体胶囊按钮：九宫格底图（只横向拉伸，竖向渐变不变形）+ 图层投影。
@@ -326,8 +353,8 @@ static void StylePillButton(UIButton *btn, NSString *normal, NSString *down,
    等距 3pt 实 / 3pt 虚，和 iOS 5 的皮革缝线观感一致。 */
 static void AddStitchBorder(UIView *host, CGFloat inset)
 {
-    UIImage *h = [UIImage imageNamed:@"StitchH"];
-    UIImage *v = [UIImage imageNamed:@"StitchV"];
+    UIImage *h = [UIImage imageNamed:SkinImage(@"StitchH")];
+    UIImage *v = [UIImage imageNamed:SkinImage(@"StitchV")];
     CGRect b;
     CGFloat w, hh;
     UIView *top, *bottom, *left, *right;
@@ -526,7 +553,17 @@ static void ReloadTable(void)
         [sStatusLabel setText:LoadingText()];
         [sStatusLabel setHidden:(sRefreshState == 3) ? YES : NO];
     } else if (state == 3) {
-        [sStatusLabel setText:WeiboStoreErrorText()];
+        /* 加载失败 vs 空流分开提示：空流(接口返回空数据)且当前在分组流上时，
+           给出「去网页版加分组」的指引；有数据(state==2)时提示必须隐藏——
+           此前 bug：state==2 也会命中分组空态分支，提示压在有数据的列表上。 */
+        NSString *err = WeiboStoreErrorText();
+        BOOL emptyData = (!err || [err length] == 0 ||
+                          [err isEqualToString:@"接口返回空数据，下拉刷新重试"]);
+        if (emptyData && (WeiboStoreFeed() == 3 || WeiboStoreFeed() == 4)) {
+            [sStatusLabel setText:@"这个分组还没有微博\n去网页版或微博 App 把人加进分组"];
+        } else {
+            [sStatusLabel setText:err ? err : @""];
+        }
         [sStatusLabel setHidden:NO];
     } else {
         [sStatusLabel setHidden:YES];
@@ -542,8 +579,7 @@ static void ReloadTable(void)
 #endif
 
 #ifdef TABSCHECK
-    /* tab 命中自检：自绘 tab 之后，必须确认三个透明按钮真的在文字层之上、
-       并且点击能走到 switchTabIndex:（而不是被别的视图挡住）。 */
+    /* 切流自检（三个 tab 已移除，改验标题 + 菜单选流链路）。 */
     if (state == 2 && sSelf && !sTabChkStage) {
         sTabChkStage = 1;
         [(RootViewController *)sSelf performSelector:@selector(diagTabHit)
@@ -628,6 +664,54 @@ static void ReloadTable(void)
     }
 #endif
 
+#ifdef SPECIALSHOT
+    /* 视觉自检：切到第三格（我的 或 特别关注）后截整屏，
+       用来确认 4 个汉字的标签在 61pt 段里没被截断、浮块宽度正常。 */
+    if (sSelf && state == 2 && sSpShotStage == 0) {
+        sSpShotStage = 1;
+        [(RootViewController *)sSelf diagSpecialTabShot];
+    }
+#endif
+
+#ifdef SPECIALCHECK
+    /* 服务端分组端到端自检：切第三格 → 校验条数>0 → 还原槽位 */
+    if (sSelf && state == 2) {
+        if (sSpChkStage == 0) {
+            if (WeiboStoreFeed() != 1) {
+                sSpChkStage = 1;
+                SetTabIndex(1);
+                [(RootViewController *)sSelf feedChanged:nil];
+            } else {
+                sSpChkStage = 1;
+            }
+        } else if (sSpChkStage == 1) {
+            [(RootViewController *)sSelf diagSpecialBegin];
+        } else if (sSpChkStage == 2 && WeiboStoreFeed() == 3
+                   && sPosts && [sPosts count] > 0) {
+            [(RootViewController *)sSelf diagSpecialVerify];
+        }
+    }
+#endif
+
+#ifdef MENUCHECK
+    /* 汉堡菜单自检：切第三格(我的) → 数据到达后自动打开菜单截图 →
+       程序化点「特别关注」→ 校验第三格换成分组流 → 还原槽位。
+       与 SHOTCHECK 同用（截图函数在那里定义），MENUCHECK=1 启用。 */
+    if (sSelf && state == 2) {
+        if (sMenuChkStage == 0) {
+            sMenuChkStage = 1;
+            [(RootViewController *)sSelf diagMenuStart];
+        } else if (sMenuChkStage == 1) {
+            sMenuChkStage = 5;   /* 防重入：菜单可能被多次 ReloadTable 触发 */
+            [(RootViewController *)sSelf diagMenuOpen];
+        } else if (sMenuChkStage == 2 && WeiboStoreFeed() == 3
+                   && sPosts && [sPosts count] > 0) {
+            sMenuChkStage = 3;
+            [(RootViewController *)sSelf diagMenuVerify];
+        }
+    }
+#endif
+
 #ifdef LEGACY_UI_EXTRA
     /* 扩展交互自检：上拉加载更多 → 数据追加后弹出图片查看器。
        与扫码自检(UI_PROBE)互斥，用 UIEXTRA=1 单独启用。 */
@@ -665,7 +749,9 @@ static void ReloadTable(void)
 #ifdef LEGACY_DIAG
     /* 界面自检：第一次数据到达 -> 模拟一次下拉刷新；刷新后再次成功 -> 自动滑入详情。
        两条交互路径都会写 /tmp/legacy_boot.txt，可 SSH 回读，不依赖触摸模拟。 */
-#ifndef LEGACY_UI_EXTRA
+#if !defined(LEGACY_UI_EXTRA) && !defined(SPECIALSHOT) && !defined(SPECIALCHECK) && !defined(MENUCHECK) && !defined(SKINCHECK)
+    /* SPECIALSHOT / SPECIALCHECK 会自己决定停在哪个 tab，
+       这里的老自动流程（下拉刷新 + 切到关注流）会和它抢 tab，必须让位 */
     if (state == 2 && sSelf && sPosts && [sPosts count] > 0) {
         if (!sAutoRefreshDone) {
             sAutoRefreshDone = 1;
@@ -693,7 +779,7 @@ static void ReloadTable(void)
             }
         }
     }
-#endif   /* !LEGACY_UI_EXTRA */
+#endif   /* !LEGACY_UI_EXTRA && !SPECIALSHOT && !SPECIALCHECK */
 #endif   /* LEGACY_DIAG */
 }
 
@@ -931,11 +1017,12 @@ static void LayoutComments(void)
     [self setView:rootView];
     [rootView release];
 
-    /* 蓝色渐变导航条：位图由 scripts/make_assets.py 按 52pt 预渲染 */
+    /* 深蓝皮革导航条（与汉堡菜单同款配色）：位图由 make_assets.py 预渲染 */
     UIImageView *navBg = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, w, navH)];
-    [navBg setImage:[UIImage imageNamed:@"NavBar"]];
+    [navBg setImage:[UIImage imageNamed:SkinImage(@"NavBar")]];
     [[self view] addSubview:navBg];
     [navBg release];
+    AddReminderRule([self view], h);
 
     /* 左侧账号区：未登录显示「登录」按钮（点扫码），已登录显示圆形头像
        （点账号详情从左侧滑出）。52pt 蓝条内 h=30 → y=11 垂直居中。 */
@@ -963,70 +1050,48 @@ static void LayoutComments(void)
     [[self view] addSubview:sAccountHit];
 
     WeiboStoreSetProfileCallback(ProfileChanged);
+    WeiboStoreSetGroupsCallback(GroupsChanged);
     [self refreshAccountArea];
     if (WeiboStoreLoggedIn()) WeiboStoreFetchProfile();
 
-    /* 中间：热门 / 关注 / 我的 三段，全部自绘（见文件头 sTabLabels 说明） */
+    /* 标题框以屏幕中线严格对称：x=68、宽=w-136 → 中心恒为 w/2。
+       左侧账号区到 x=68、右侧汉堡钮从 x=w-40 起，互不遮挡。
+       textAlignment=kTextAlignCenter 才能让文字真正落在屏幕中点。 */
     {
-        NSArray *tabs = [NSArray arrayWithObjects:@"热门", @"关注", @"我的", nil];
-        CGRect segFrame = CGRectMake(68.0f, 12.0f, w - 136.0f, 28.0f);
-        CGFloat segW = CGRectGetWidth(segFrame) / 3.0f;
-        int i;
+        CGFloat titleW = w - 136.0f;
+        sFeedTitle = [[UILabel alloc]
+                      initWithFrame:CGRectMake((w - titleW) / 2.0f, 13.0f, titleW, 26.0f)];
+        [sFeedTitle setText:SlotTitle()];
+        [sFeedTitle setFont:[UIFont boldSystemFontOfSize:16.0f]];
+        [sFeedTitle setTextAlignment:kTextAlignCenter];
+        [sFeedTitle setTextColor:[UIColor whiteColor]];
+        [sFeedTitle setShadowColor:[UIColor colorWithRed:0.05f green:0.14f blue:0.28f alpha:0.85f]];
+        [sFeedTitle setShadowOffset:CGSizeMake(0.0f, -1.0f)];
+        [sFeedTitle setBackgroundColor:[UIColor clearColor]];
+        [[self view] addSubview:sFeedTitle];
+        [sFeedTitle release];   /* 父视图持有，静态指针只借用 */
 
-        /* 深蓝槽：独立视图垫底，圆角矩形（方案 A 的凹槽） */
-        sSegGroove = [[UIImageView alloc] initWithFrame:segFrame];
-        [sSegGroove setImage:[UIImage imageNamed:@"SegNormal"]];
-        [sSegGroove setContentMode:kContentModeScaleToFill];
-        [sSegGroove setBackgroundColor:[UIColor colorWithRed:0.14f green:0.29f blue:0.49f alpha:1.0f]];
-        RoundView(sSegGroove, 6.0f);
-        [[self view] addSubview:sSegGroove];
-        [sSegGroove release];
+        /* 初始流 = 槽位（没选过则按登录态：登录=关注，游客=热门）。
+           WeiboStore 的默认逻辑在 EnsureSlotState 里已按 sCookie 算好，
+           这里把 sFeed 同步过去，否则登录用户启动时会停在热门。 */
+        SetTabIndex(WeiboStoreSlotKind());
+        WeiboStoreSwitchFeed(sTabIndex);
+    }
 
-        /* 亮蓝浮块：四边留缝、独立圆角，位置随选中段移动 */
-        sSegBlock = [[UIImageView alloc] initWithFrame:segFrame];
-        [sSegBlock setImage:[UIImage imageNamed:@"SegBlock"]];
-        [sSegBlock setContentMode:kContentModeScaleToFill];
-        [[self view] addSubview:sSegBlock];
-        [sSegBlock release];
-
-        /* 文字层 + 命中层：文字在下、透明按钮在上，视觉上只剩浮块与字 */
-        sTabHit = [[UIView alloc] initWithFrame:segFrame];
-        [sTabHit setBackgroundColor:[UIColor clearColor]];
-        [[self view] addSubview:sTabHit];
-        [sTabHit release];
-
-        for (i = 0; i < 3; i++) {
-            CGRect cell = CGRectMake(segW * (CGFloat)i, 0.0f, segW, CGRectGetHeight(segFrame));
-            UILabel *lab = [[UILabel alloc] initWithFrame:cell];
-            UIButton *hit;
-            [lab setText:[tabs objectAtIndex:i]];
-            [lab setFont:[UIFont boldSystemFontOfSize:13.0f]];
-            [lab setTextAlignment:kTextAlignCenter];
-            [lab setBackgroundColor:[UIColor clearColor]];
-            [sTabHit addSubview:lab];
-            sTabLabels[i] = lab;      /* 父视图持有，这里只借指针改字色 */
-            [lab release];
-
-            hit = [UIButton buttonWithType:kButtonTypeRounded];
-            [hit setFrame:cell];
-            [hit setBackgroundColor:[UIColor clearColor]];
-            /* 透明底图覆盖三个状态：否则 rounded 按钮按下时会闪一块蓝色 */
-            [hit setBackgroundImage:[UIImage imageNamed:@"SegDivider"]
+    /* 右侧汉堡按钮：三条横线的圆形按钮，点开第三格流的二级菜单
+       （我的 / 特别关注 / 服务端全部分组）。位图由 make_assets.py 预渲染。 */
+    {
+        UIButton *menuBtn = [UIButton buttonWithType:kButtonTypeRounded];
+        [menuBtn setFrame:CGRectMake(w - 40.0f, 11.0f, 30.0f, 30.0f)];
+        [menuBtn setBackgroundImage:[UIImage imageNamed:SkinImage(@"MenuBtn")]
                            forState:kControlStateNormal];
-            [hit setBackgroundImage:[UIImage imageNamed:@"SegDivider"]
+        [menuBtn setBackgroundImage:[UIImage imageNamed:SkinImage(@"MenuBtn")]
                            forState:kControlStateHighlighted];
-            [hit setBackgroundImage:[UIImage imageNamed:@"SegDivider"]
+        [menuBtn setBackgroundImage:[UIImage imageNamed:SkinImage(@"MenuBtn")]
                            forState:kControlStateSelected];
-            {
-                SEL act = @selector(tabHot:);
-                if (i == 1) act = @selector(tabFollow:);
-                else if (i == 2) act = @selector(tabMine:);
-                [hit addTarget:self action:act forControlEvents:kControlEventTouchUpInside];
-            }
-            [sTabHit addSubview:hit];
-        }
-
-        SetTabIndex(0);        /* 初始选中热门，顺带定位浮块与字色 */
+        [menuBtn addTarget:self action:@selector(menuTapped:)
+          forControlEvents:kControlEventTouchUpInside];
+        [[self view] addSubview:menuBtn];
     }
 
     /* 右侧原「刷新」按钮已移除（用户要求）。刷新仍可用下拉手势触发，
@@ -1114,6 +1179,9 @@ static void LayoutComments(void)
 #ifdef ACCOUNTCHECK
     /* 启动即触发账号自检（同步，不依赖 run loop 延迟调度/数据加载） */
     [self diagAccountCheck];
+#endif
+#ifdef SKINCHECK
+    [self diagSkinCheck];
 #endif
 }
 
@@ -1694,9 +1762,10 @@ static void SetLoadMoreLabel(void)
     [overlay setBackgroundColor:LinenColor()];
 
     UIImageView *navBg = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, w, navH)];
-    [navBg setImage:[UIImage imageNamed:@"NavBar"]];
+    [navBg setImage:[UIImage imageNamed:SkinImage(@"NavBar")]];
     [overlay addSubview:navBg];
     [navBg release];
+    AddReminderRule(overlay, h);
 
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(70.0f, 13.0f, w - 140.0f, 26.0f)];
     [title setText:@"微博正文"];
@@ -1707,16 +1776,15 @@ static void SetLoadMoreLabel(void)
     [overlay addSubview:title];
     [title release];
 
-    /* 返回：立体胶囊（深蓝渐变 + 玻璃高光 + 描边 + 投影），与导航条材质同族 */
+    /* 返回：与右上角汉堡钮同款的皮革圆钮（奶油箭头 ‹），导航条内垂直居中 */
     UIButton *back = [UIButton buttonWithType:kButtonTypeRounded];
-    [back setFrame:CGRectMake(8.0f, 13.0f, 60.0f, 26.0f)];
-    [back setTitle:@"返回" forState:kControlStateNormal];
-    [back setTitleColor:[UIColor whiteColor] forState:kControlStateNormal];
-    [back setTitleColor:[UIColor colorWithRed:0.86f green:0.92f blue:0.99f alpha:1.0f]
-                forState:kControlStateHighlighted];
-    [[back titleLabel] setFont:[UIFont boldSystemFontOfSize:14.0f]];
-    StylePillButton(back, @"BtnNavy", @"BtnNavyDown", 11.0f,
-                    [UIColor colorWithRed:0.02f green:0.09f blue:0.18f alpha:0.85f]);
+    [back setFrame:CGRectMake(8.0f, 11.0f, 30.0f, 30.0f)];
+    [back setBackgroundImage:[UIImage imageNamed:SkinImage(@"BackBtn")]
+                    forState:kControlStateNormal];
+    [back setBackgroundImage:[UIImage imageNamed:SkinImage(@"BackBtn")]
+                    forState:kControlStateHighlighted];
+    [back setBackgroundImage:[UIImage imageNamed:SkinImage(@"BackBtn")]
+                    forState:kControlStateSelected];
     [back addTarget:self action:@selector(closeDetail:)
    forControlEvents:kControlEventTouchUpInside];
     [overlay addSubview:back];
@@ -2124,39 +2192,32 @@ static NSUInteger FindCommentPost(int *outCount)
 #endif
 
 #ifdef TABSCHECK
-/* 自绘 tab 的命中自检：对每段中心做 hitTest，看返回的是不是 UIButton；
-   再对「关注」的命中视图派发 touchUpInside，确认能一路走到 feedChanged:。 */
+/* 切流自检（原 tab 命中自检已随三个 tab 移除）：
+   验证顶部标题存在且文字与当前流一致，再程序化选「关注」走一遍菜单切流。 */
 - (void)diagTabHit
 {
-    CGRect f = [sSegGroove frame];
-    CGFloat segW = CGRectGetWidth(f) / 3.0f;
     int i;
-    NSArray *names = [NSArray arrayWithObjects:@"热门", @"关注", @"我的", nil];
-    id followHit = nil;
+    NSArray *names = [NSArray arrayWithObjects:@"热门", @"关注", @"我的", @"特别关注", nil];
 
-    (void)f;
-    for (i = 0; i < 3; i++) {
-        /* hitTest 的点必须在 sTabHit 自己的坐标系里（左下为原点、相对父视图） */
-        CGPoint p = CGPointMake(segW * (CGFloat)i + segW / 2.0f,
-                                CGRectGetMidY([sTabHit bounds]));
-        id hit = [sTabHit hitTest:p withEvent:nil];
-        diag([[NSString stringWithFormat:@"TABSCHECK: seg%d(%@) hit=%@",
-               i, [names objectAtIndex:i],
-               (hit && [hit isKindOfClass:[UIButton class]]) ? @"UIButton" : @"MISS"]
-              UTF8String]);
-        if (i == 1) followHit = hit;
+    for (i = 0; i < 4; i++) {
+        if (i == sTabIndex) {
+            diag([[NSString stringWithFormat:@"TABSCHECK: item%d(%@) selected",
+                   i, [names objectAtIndex:i]] UTF8String]);
+        }
     }
+    diag([[NSString stringWithFormat:@"TABSCHECK: title=%@ index=%d feed=%d",
+           sFeedTitle ? [sFeedTitle text] : @"(nil)", sTabIndex, WeiboStoreFeed()] UTF8String]);
 
-    diag([[NSString stringWithFormat:@"TABSCHECK: before index=%d feed=%d",
-           sTabIndex, WeiboStoreFeed()] UTF8String]);
-    if (followHit) [followHit sendActionsForControlEvents:kControlEventTouchUpInside];
+    /* 直接模拟菜单点「关注」：验证 SelectSlot -> SwitchFeed -> 标题更新整条链 */
+    [self slotMenuItemForFeed:1];
     [self performSelector:@selector(diagTabAfter) withObject:nil afterDelay:1.2];
 }
 
 - (void)diagTabAfter
 {
-    diag([[NSString stringWithFormat:@"TABSCHECK: after index=%d feed=%d posts=%d",
-           sTabIndex, WeiboStoreFeed(), (int)(sPosts ? [sPosts count] : 0)] UTF8String]);
+    diag([[NSString stringWithFormat:@"TABSCHECK: after index=%d feed=%d title=%@ posts=%d",
+           sTabIndex, WeiboStoreFeed(), sFeedTitle ? [sFeedTitle text] : @"(nil)",
+           (int)(sPosts ? [sPosts count] : 0)] UTF8String]);
 }
 #endif
 
@@ -2236,6 +2297,68 @@ static NSUInteger FindCommentPost(int *outCount)
 {
     [self galleryShot:@"/tmp/gallery_3_panel.png"];
     diag("GALLERY: done");
+}
+#endif
+
+#ifdef SKINCHECK
+/* 皮肤切换端到端自检。切换会重建 rootView（sSelf 等静态全清），延迟链不可靠，
+   所以用 /tmp/skincheck_pending 文件跨重建传递状态：
+   第一次 loadView：记录 before skin → 进账号面板 → 点皮肤切换钮（触发重建）；
+   重建后新 loadView：看到标记首字节='1' → 写回 '0' + 截图 + 报告新皮肤值。 */
+- (void)diagSkinCheck
+{
+    const char *mark = "/tmp/skincheck_pending";
+    char buf = 0;
+    int fd = open(mark, 0, 0);            /* O_RDONLY：读标记首字节 */
+    if (fd >= 0) { read(fd, &buf, 1); close(fd); }
+
+    if (buf == '1') {
+        int z;
+        id data; void *ctx;
+        CGRect b; CGFloat w, h;
+        /* 重建后的新界面：先把标记写成 '0'，防后续任何重建重复触发 */
+        z = open(mark, 0x601, 0644);      /* WRONLY|CREAT|TRUNC */
+        if (z >= 0) { write(z, "0", 1); close(z); }
+
+        b = [[UIScreen mainScreen] bounds];
+        w = CGRectGetWidth(b); h = CGRectGetHeight(b);
+        UIGraphicsBeginImageContextWithOptions(CGSizeMake(w, h), NO, 0.0f);
+        ctx = UIGraphicsGetCurrentContext();
+        [(LegacyLayerShim *)[[self view] layer] renderInContext:ctx];
+        data = UIImagePNGRepresentation(UIGraphicsGetImageFromCurrentImageContext());
+        UIGraphicsEndImageContext();
+        if (data) [data writeToFile:@"/tmp/skincheck_after.png" atomically:YES];
+
+        z = open("/tmp/skincheck_after.png", 0, 0);
+        diag([[NSString stringWithFormat:
+               @"SKINCHECK: after rebuild skin=%d name=%s shot=%@",
+               SkinCurrent(), SkinName(), z >= 0 ? @"YES" : @"NO"] UTF8String]);
+        if (z >= 0) close(z);
+        diag("SKINCHECK: done");
+        return;
+    }
+
+    /* 第一次：记录切换前状态，延迟进账号面板点切换钮（等 runloop 起来） */
+    diag([[NSString stringWithFormat:@"SKINCHECK: before skin=%d name=%s",
+           SkinCurrent(), SkinName()] UTF8String]);
+    [self performSelector:@selector(diagSkinDoToggle) withObject:nil afterDelay:2.0];
+}
+
+- (void)diagSkinDoToggle
+{
+    {
+        int fd = open("/tmp/skincheck_pending", 0x601, 0644);  /* WRONLY|CREAT|TRUNC */
+        if (fd >= 0) { write(fd, "1", 1); close(fd); }
+    }
+    diag("SKINCHECK: open account panel");
+    [self showAccountPanel];
+    [self performSelector:@selector(diagSkinTapBtn) withObject:nil afterDelay:1.2];
+}
+
+- (void)diagSkinTapBtn
+{
+    diag("SKINCHECK: tapping skin button");
+    [self skinTapped:nil];   /* 内部 SkinToggle + rebuildRoot，本方法之后不再执行 */
 }
 #endif
 
@@ -2363,7 +2486,7 @@ static NSUInteger FindCommentPost(int *outCount)
 {
     NSInteger feed = (NSInteger)target;
     diag("UIEXTRA: switch feed target");
-    if (feed < 0 || feed > 2) feed = 0;
+    if (feed < 0 || feed > 4) feed = 0;
     SetTabIndex(feed);
     [self feedChanged:nil];
 }
@@ -2426,34 +2549,348 @@ static NSUInteger FindCommentPost(int *outCount)
 #endif
 #endif
 
-/* 三个 tab 的点击入口：先静默切换（移动浮块 + 换字色），再走原有 feedChanged:。
-   点已选中的 tab 与 UISegmentedControl 行为一致——不触发任何事件。 */
-- (void)switchTabIndex:(int)idx sender:(id)sender
+/* 程序化选某个流（自检用）：与点击菜单走同一条 SelectSlot -> SwitchFeed 链。
+   feed 1/2/3 需要登录，未登录时 feedChanged 会弹扫码并退回热门。 */
+- (void)slotMenuItemForFeed:(int)feed
 {
-    if (idx < 0 || idx > 2 || idx == sTabIndex) return;
-    SetTabIndex(idx);
-    [self feedChanged:sender];
+    WeiboStoreSelectSlot(feed, nil, nil);
+    SetTabIndex(feed);
+    [self feedChanged:nil];
+}
+#ifdef SPECIALSHOT
+/* 切到第三格后延时截屏，验证 4 字标签与浮块 */
+- (void)diagSpecialTabShot
+{
+    SetTabIndex(2);
+    [self feedChanged:nil];
+    [self performSelector:@selector(diagSpecialTabShotDo)
+               withObject:nil afterDelay:4.0];
 }
 
-- (void)tabHot:(id)sender    { [self switchTabIndex:0 sender:sender]; }
-- (void)tabFollow:(id)sender { [self switchTabIndex:1 sender:sender]; }
-- (void)tabMine:(id)sender   { [self switchTabIndex:2 sender:sender]; }
+- (void)diagSpecialTabShotDo
+{
+#ifdef LEGACY_DIAG
+    diag([[NSString stringWithFormat:@"SPECIALSHOT: capture index=%d feed=%d slot=%d posts=%d",
+           sTabIndex, WeiboStoreFeed(), WeiboStoreSlotKind(),
+           (int)(sPosts ? [sPosts count] : 0)] UTF8String]);
+#endif
+    sSpShotStage = 2;
+    /* SHOTCHECK 的一次性标志是共享的，这里强制重截 */
+    sShotDone = 0;
+    [self diagTakeScreenshot];
+}
+#endif
+
+#ifdef SPECIALCHECK
+/* 服务端分组版端到端自检：切第三格，数据到达后校验，再还原槽位 */
+- (void)diagSpecialBegin
+{
+    sSpChkStage = 2;
+#ifdef LEGACY_DIAG
+    diag("SPECIALCHECK: switch to feed 3");
+#endif
+    WeiboStoreSelectSlot(3, nil, nil);   /* 3 = 特别关注 */
+    SetTabIndex(3);
+    [self feedChanged:nil];
+}
+
+- (void)diagSpecialVerify
+{
+    int n = (int)(sPosts ? [sPosts count] : 0);
+    sSpChkStage = 3;
+#ifdef LEGACY_DIAG
+    diag([[NSString stringWithFormat:@"SPECIALCHECK: feed=3 posts=%d slot=%d",
+           n, WeiboStoreSlotKind()] UTF8String]);
+#endif
+    /* 还原槽位，避免污染用户设置 */
+    WeiboStoreSelectSlot(0, nil, nil);
+    RefreshFeedTitle(0);
+#ifdef LEGACY_DIAG
+    diag([[NSString stringWithFormat:@"SPECIALCHECK: restored slot=%d", WeiboStoreSlotKind()] UTF8String]);
+#endif
+}
+#endif
+
+#ifdef MENUCHECK
+/* 汉堡菜单自检三步：进第三格 → 开菜单截图并点「特别关注」→ 校验并还原 */
+- (void)diagMenuStart
+{
+#ifdef LEGACY_DIAG
+    diag("MENUCHECK: start from feed 0 (hot)");
+#endif
+    [self slotMenuItemForFeed:0];   /* 从热门起步，避免与启动默认流相同导致不切 */
+}
+
+- (void)diagMenuOpen
+{
+#ifdef LEGACY_DIAG
+    diag("MENUCHECK: open menu");
+#endif
+    [self openGroupMenu];   /* 直接开，不走 menuTapped 的开关切换 */
+    [self performSelector:@selector(diagMenuPick) withObject:nil afterDelay:1.5];
+}
+
+- (void)diagMenuPick
+{
+    /* 先截一张菜单打开态，再程序化点第 4 条「特别关注」（索引 3） */
+    sShotDone = 0;
+    [self diagTakeScreenshot];
+    {
+        UIButton *fake = [UIButton buttonWithType:kButtonTypeRounded];
+        [fake setTag:3];
+        [self slotMenuItemTapped:fake];
+    }
+    sMenuChkStage = 2;
+}
+
+- (void)diagMenuVerify
+{
+#ifdef LEGACY_DIAG
+    diag([[NSString stringWithFormat:@"MENUCHECK: feed=%d posts=%d title=%@",
+           WeiboStoreFeed(), (int)(sPosts ? [sPosts count] : 0), SlotTitle()] UTF8String]);
+#endif
+    /* 还原槽位，避免污染用户设置 */
+    WeiboStoreSelectSlot(0, nil, nil);
+    RefreshFeedTitle(0);
+}
+#endif
+
+
+/* ---------- 导航栏汉堡菜单：第三格流切换 ----------
+   我的 / 特别关注 / 服务端全部分组（来自 /api/config/list）。
+   样式走 V0.3 拟物语言（方案 A）：深蓝皮革底纹 + 内圈缝线，
+   选中条目 = 三段浮块同款玻璃胶囊（PillBlue40），文字奶油白。
+   替代原账号面板里的「第三格」切换按钮（用户要求移到主界面导航栏）。 */
+
+- (void)rebuildGroupMenu
+{
+    NSMutableArray *items;
+    NSArray *groups;
+    int selKind;
+    NSString *selGid;
+    CGFloat pw = 200.0f;
+    CGFloat y = 8.0f;
+    NSUInteger i;
+
+    if (!sMenuPanel || !sMenuList) return;
+
+    /* 清掉旧条目（sMenuList 之外的底纹、缝线、顶部高光都保留） */
+    while ([[sMenuList subviews] count] > 0)
+        [[[sMenuList subviews] objectAtIndex:0] removeFromSuperview];
+
+    /* 固定前四项：热门 / 关注 / 我的 / 特别关注，kind 直接就是 feed id。
+       主界面只显示菜单所选的流，所以这四个必须都在菜单里（原来只在 tab 上）。 */
+    items = [[NSMutableArray alloc] init];
+    {
+        int k;
+        NSArray *names = [NSArray arrayWithObjects:@"热门", @"关注", @"我的", @"特别关注", nil];
+        for (k = 0; k < 4; k++) {
+            NSMutableDictionary *it = [[NSMutableDictionary alloc] init];
+            [it setObject:[NSNumber numberWithInt:k] forKey:@"kind"];
+            [it setObject:[names objectAtIndex:k] forKey:@"name"];
+            [items addObject:it];
+            [it release];
+        }
+    }
+
+    groups = WeiboStoreGroups();
+    if (groups) {
+        /* 服务端分组保持接口返回顺序（即用户在官方端的分组顺序）；
+           「特别关注」上面已单列，跳过避免重复。 */
+        for (i = 0; i < [groups count]; i++) {
+            NSDictionary *g = [groups objectAtIndex:i];
+            NSString *nm = [g objectForKey:@"name"];
+            NSString *gid = [g objectForKey:@"gid"];
+            if (!nm || !gid || [nm isEqualToString:@"特别关注"]) continue;
+            {
+                NSMutableDictionary *it = [[NSMutableDictionary alloc] init];
+                [it setObject:[NSNumber numberWithInt:4] forKey:@"kind"];
+                [it setObject:nm forKey:@"name"];
+                [it setObject:gid forKey:@"gid"];
+                [items addObject:it];
+                [it release];
+            }
+        }
+    } else {
+        /* 分组列表还没拉到：先放占位行，回调(GroupsChanged)到达后整单重建 */
+        UILabel *loading = [[UILabel alloc]
+                            initWithFrame:CGRectMake(10.0f, y, pw - 20.0f, 40.0f)];
+        [loading setText:@"正在获取分组…"];
+        [loading setFont:[UIFont systemFontOfSize:14.0f]];
+        [loading setTextAlignment:kTextAlignCenter];
+        [loading setTextColor:[UIColor colorWithRed:0.72f green:0.67f blue:0.56f alpha:1.0f]];
+        [loading setBackgroundColor:[UIColor clearColor]];
+        [sMenuList addSubview:loading];
+        [loading release];
+        y += 46.0f;
+    }
+
+    selKind = WeiboStoreSlotKind();
+    selGid = WeiboStoreSlotGid();
+
+    for (i = 0; i < [items count]; i++) {
+        NSDictionary *it = [items objectAtIndex:i];
+        int kind = [[it objectForKey:@"kind"] intValue];
+        NSString *gid = [it objectForKey:@"gid"];
+        BOOL sel = (kind == selKind) &&
+                   (kind != 4 || (gid && selGid && [gid isEqualToString:selGid]));
+        UIButton *row = [UIButton buttonWithType:kButtonTypeRounded];
+        [row setFrame:CGRectMake(10.0f, y, pw - 20.0f, 40.0f)];
+        [row setTitle:[it objectForKey:@"name"] forState:kControlStateNormal];
+        [[row titleLabel] setFont:[UIFont boldSystemFontOfSize:15.0f]];
+        /* 选中：玻璃胶囊底图（与三段浮块同渐变）+ 奶油白字；
+           未选中：透明底 + 奶油白字 + 1px 压痕阴影，像刻在皮革上。 */
+        {
+            UIImage *pill = sel ? [UIImage imageNamed:SkinImage(@"PillBlue40")] : nil;
+            [row setBackgroundImage:pill forState:kControlStateNormal];
+            [row setBackgroundImage:pill forState:kControlStateHighlighted];
+            [row setBackgroundColor:[UIColor clearColor]];
+            [[row titleLabel] setShadowColor:(sel
+                ? [UIColor colorWithRed:0.06f green:0.14f blue:0.24f alpha:0.75f]
+                : [UIColor colorWithRed:0.0f green:0.0f blue:0.0f alpha:0.55f])];
+            [[row titleLabel] setShadowOffset:CGSizeMake(0.0f, 1.0f)];
+        }
+        [row setTitleColor:(sel ? [UIColor colorWithRed:1.0f green:0.99f blue:0.97f alpha:1.0f]
+                                : [UIColor colorWithRed:0.95f green:0.91f blue:0.85f alpha:1.0f])
+                  forState:kControlStateNormal];
+        [row setTitleColor:(sel ? [UIColor colorWithRed:0.90f green:0.94f blue:0.99f alpha:1.0f]
+                                : [UIColor colorWithRed:0.82f green:0.81f blue:0.79f alpha:1.0f])
+                  forState:kControlStateHighlighted];
+        [row setTag:(NSInteger)i];
+        [row addTarget:self action:@selector(slotMenuItemTapped:)
+      forControlEvents:kControlEventTouchUpInside];
+        [sMenuList addSubview:row];
+        y += 46.0f;
+    }
+
+    if (sMenuItems) [sMenuItems release];
+    sMenuItems = items;   /* 转移所有权 */
+
+    {   /* 面板高度随条目数伸缩，并贴着导航栏右下角；条容器同步长高，
+           否则超出 52pt 的按钮收不到点击（UIView 不把界外触摸派给子视图）。 */
+        CGRect pf = [sMenuPanel frame];
+        pf.size.height = y + 6.0f;
+        pf.origin.x = CGRectGetWidth([[UIScreen mainScreen] bounds]) - pw - 12.0f;
+        [sMenuPanel setFrame:pf];
+        [sMenuList setFrame:CGRectMake(0, 0, CGRectGetWidth(pf), CGRectGetHeight(pf))];
+    }
+
+    /* 内圈缝线 + 顶部高光：尺寸跟面板高度绑定，每次重建都重铺一张（旧的连视图一起释放） */
+    if (sMenuStitch) { [sMenuStitch removeFromSuperview]; sMenuStitch = nil; }
+    {
+        CGRect pf = [sMenuPanel frame];
+        UIView *gloss;
+        sMenuStitch = [[UIView alloc] initWithFrame:CGRectMake(0, 0, CGRectGetWidth(pf),
+                                                              CGRectGetHeight(pf))];
+        [sMenuStitch setBackgroundColor:[UIColor clearColor]];
+        gloss = [[UIView alloc] initWithFrame:CGRectMake(8.0f, 1.0f, pw - 16.0f, 1.0f)];
+        [gloss setBackgroundColor:[UIColor colorWithRed:1.0f green:1.0f blue:1.0f alpha:0.10f]];
+        [sMenuStitch addSubview:gloss];
+        [gloss release];
+        AddStitchBorder(sMenuStitch, 4.0f);
+        [sMenuPanel insertSubview:sMenuStitch atIndex:0];
+        [sMenuStitch release];   /* panel 持有；静态指针只借用 */
+    }
+}
+
+- (void)openGroupMenu
+{
+    CGRect bounds = [[UIScreen mainScreen] bounds];
+    CGFloat w = CGRectGetWidth(bounds);
+    UITapGestureRecognizer *tap;
+
+    if (sMenuOverlay) return;
+
+    sMenuOverlay = [[UIView alloc] initWithFrame:bounds];
+    [sMenuOverlay setBackgroundColor:[UIColor colorWithRed:0.0f green:0.0f blue:0.0f alpha:0.42f]];
+    tap = [[UITapGestureRecognizer alloc] initWithTarget:self
+                                                  action:@selector(menuShadeTapped:)];
+    [sMenuOverlay addGestureRecognizer:tap];
+    [tap release];
+
+    sMenuPanel = [[UIView alloc] initWithFrame:CGRectMake(w - 212.0f, 54.0f, 200.0f, 52.0f)];
+    {   /* 皮革底纹：8pt 平铺贴图，面板高度变化也不会有拉伸接缝 */
+        UIImage *leather = [UIImage imageNamed:SkinImage(@"MenuLeather")];
+        if (leather)
+            [sMenuPanel setBackgroundColor:[UIColor colorWithPatternImage:leather]];
+        else
+            [sMenuPanel setBackgroundColor:[UIColor colorWithRed:0.09f green:0.15f blue:0.23f alpha:1.0f]];
+    }
+    RoundView(sMenuPanel, 10.0f);
+    [sMenuOverlay addSubview:sMenuPanel];
+
+    sMenuList = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 200.0f, 52.0f)];
+    [sMenuList setBackgroundColor:[UIColor clearColor]];
+    [sMenuPanel addSubview:sMenuList];
+    [sMenuList release];   /* panel 持有 */
+
+    [[self view] addSubview:sMenuOverlay];
+    [self rebuildGroupMenu];
+
+    /* 分组列表懒加载：第一次打开菜单才请求，到达后由回调重建条目 */
+    if (!WeiboStoreGroups()) WeiboStoreFetchGroups();
+}
+
+- (void)menuTapped:(id)sender
+{
+    (void)sender;
+    if (sMenuOverlay) { [self closeGroupMenu]; return; }   /* 再点汉堡=收起 */
+    [self openGroupMenu];
+}
+
+- (void)menuShadeTapped:(id)sender
+{
+    (void)sender;
+    [self closeGroupMenu];
+}
+
+- (void)closeGroupMenu
+{
+    if (!sMenuOverlay) return;
+    [sMenuOverlay removeFromSuperview];
+    [sMenuOverlay release];
+    sMenuOverlay = nil;
+    sMenuPanel = nil;             /* panel 是 overlay 子视图，随其一起消失 */
+    sMenuList = nil;              /* 同上，panel 释放时一并回收 */
+    sMenuStitch = nil;
+    if (sMenuItems) { [sMenuItems release]; sMenuItems = nil; }
+}
+
+- (void)slotMenuItemTapped:(id)sender
+{
+    UIButton *btn = (UIButton *)sender;
+    NSUInteger idx = (NSUInteger)[btn tag];
+    NSDictionary *it = (sMenuItems && idx < [sMenuItems count])
+                       ? [sMenuItems objectAtIndex:idx] : nil;
+    int kind;
+
+    if (!it) return;
+    kind = [[it objectForKey:@"kind"] intValue];   /* = feed id */
+    WeiboStoreSelectSlot(kind, [it objectForKey:@"gid"], [it objectForKey:@"name"]);
+    [self closeGroupMenu];
+    SetTabIndex(kind);                 /* 顶部标题立刻跟着换 */
+    /* 同一个 feed 换了分组 gid 时 SwitchFeed 会提前返回，先手动重拉一次；
+       未登录时 feedChanged 会弹扫码层并退回热门。 */
+    if (WeiboStoreFeed() == kind && kind == 4) WeiboStoreLoad();
+    [self feedChanged:nil];
+}
 
 - (void)feedChanged:(id)sender
 {
-    int idx = sTabIndex;
+    int idx = sTabIndex;   /* 现在直接就是 feed id */
     (void)sender;
     if (idx > 0 && !WeiboStoreLoggedIn()) {
-        /* 关注 / 我的 都需要登录：直接在 app 内弹扫码登录层 */
+        /* 关注/我的/特别关注/分组都需要登录：弹扫码层，退回热门 */
+        WeiboStoreSelectSlot(0, nil, nil);
         SetTabIndex(0);
-        layoutSegmentBlock();   /* 选中被重置回热门，浮块跟着回去 */
+        RefreshFeedTitle(0);
         [sStatusLabel setText:@"点左上角「登录」扫码后即可看关注流"];
         [sStatusLabel setHidden:NO];
         [self loginTapped:nil];
         return;
     }
-    layoutSegmentBlock();
-    WeiboStoreSwitchFeed(idx);
+    RefreshFeedTitle(idx);
+    WeiboStoreSwitchFeed(TabToFeed(idx));
 }
 
 - (void)refreshTapped:(id)sender
@@ -2469,6 +2906,12 @@ static void ProfileChanged(void)
 {
     if (sSelf) [(RootViewController *)sSelf refreshAccountArea];
     if (sAccountPanel) [(RootViewController *)sSelf refreshAccountPanel];
+}
+
+/* 分组列表到达回调（成功或失败都触发）：菜单开着时把占位行换成真分组 */
+static void GroupsChanged(void)
+{
+    if (sSelf && sMenuPanel) [(RootViewController *)sSelf rebuildGroupMenu];
 }
 
 - (void)refreshAccountArea
@@ -2507,8 +2950,9 @@ static void LoginStateChanged(int state, UIImage *qrcode, NSString *message)
         WeiboStoreReloadLogin();
         if (sSelf) [(RootViewController *)sSelf refreshAccountArea];
         WeiboStoreFetchProfile();
-        if (sSegGroove) SetTabIndex(1);
-        layoutSegmentBlock();   /* 登录成功跳关注：浮块同步 */
+        /* 登录成功跳关注：新编号里关注就是 feed 1，同步槽位+标题 */
+        WeiboStoreSelectSlot(1, nil, nil);
+        SetTabIndex(1);
         WeiboStoreSwitchFeed(1);
         return;
     }
@@ -2754,9 +3198,9 @@ static void LoginStateChanged(int state, UIImage *qrcode, NSString *message)
     sAccountPanel = [[UIView alloc] initWithFrame:CGRectMake(-pw, 0, pw, h)];
     [sAccountPanel setBackgroundColor:LinenColor()];
 
-    /* 顶部蓝色导航条：复用主界面同一张 NavBar，高度同为 kNavHeight */
+    /* 顶部深蓝皮革导航条：复用主界面同一张 NavBar，高度同为 kNavHeight */
     UIImageView *navBg = [[UIImageView alloc] initWithFrame:CGRectMake(0, 0, pw, kNavHeight)];
-    [navBg setImage:[UIImage imageNamed:@"NavBar"]];
+    [navBg setImage:[UIImage imageNamed:SkinImage(@"NavBar")]];
     [sAccountPanel addSubview:navBg];
     [navBg release];
 
@@ -2767,7 +3211,7 @@ static void LoginStateChanged(int state, UIImage *qrcode, NSString *message)
     UIImageView *card = [[UIImageView alloc] initWithFrame:CGRectMake(10.0f, kNavHeight + 10.0f,
                                                                      pw - 20.0f, 160.0f)];
     {
-        UIImage *cardImg = [UIImage imageNamed:@"PanelCard"];
+        UIImage *cardImg = [UIImage imageNamed:SkinImage(@"PanelCard")];
         if (cardImg) {
             [card setImage:[cardImg resizableImageWithCapInsets:
                               UIEdgeInsetsMake(16.0f, 16.0f, 16.0f, 16.0f)]];
@@ -2803,30 +3247,43 @@ static void LoginStateChanged(int state, UIImage *qrcode, NSString *message)
     /* 数字/性别/简介 */
     [self fillAccountPanel];
 
-    /* 返回按钮：贴左（与正文页返回同一水平位置、同尺寸），文字去掉前置箭头 */
+    /* 返回：与正文页、汉堡钮同款皮革圆钮（奶油箭头 ‹），贴左同水平位置 */
     UIButton *backBtn = [UIButton buttonWithType:kButtonTypeRounded];
-    [backBtn setFrame:CGRectMake(8.0f, 13.0f, 60.0f, 26.0f)];
-    [backBtn setTitle:@"返回" forState:kControlStateNormal];
-    [backBtn setTitleColor:[UIColor whiteColor] forState:kControlStateNormal];
-    [backBtn setTitleColor:[UIColor colorWithRed:0.86f green:0.92f blue:0.99f alpha:1.0f]
-                   forState:kControlStateHighlighted];
-    [[backBtn titleLabel] setFont:[UIFont boldSystemFontOfSize:14.0f]];
-    StylePillButton(backBtn, @"BtnNavy", @"BtnNavyDown", 11.0f,
-                    [UIColor colorWithRed:0.02f green:0.09f blue:0.18f alpha:0.85f]);
+    [backBtn setFrame:CGRectMake(8.0f, 11.0f, 30.0f, 30.0f)];
+    [backBtn setBackgroundImage:[UIImage imageNamed:SkinImage(@"BackBtn")]
+                       forState:kControlStateNormal];
+    [backBtn setBackgroundImage:[UIImage imageNamed:SkinImage(@"BackBtn")]
+                       forState:kControlStateHighlighted];
+    [backBtn setBackgroundImage:[UIImage imageNamed:SkinImage(@"BackBtn")]
+                       forState:kControlStateSelected];
     [backBtn addTarget:self action:@selector(closeAccount:)
       forControlEvents:kControlEventTouchUpInside];
     [sAccountPanel addSubview:backBtn];
 
-    /* 退出登录：红色立体胶囊（警示色但同样有高光/描边/投影，风格不跳） */
+    /* 皮肤切换：与退出并排（左切换 / 右退出），同款圆钮 + 双色圆符号。
+       点击立即切皮肤并重建界面（见 skinTapped:）。 */
+    UIButton *skinBtn = [UIButton buttonWithType:kButtonTypeRounded];
+    [skinBtn setFrame:CGRectMake(pw - 90.0f, h - 44.0f, 30.0f, 30.0f)];
+    [skinBtn setBackgroundImage:[UIImage imageNamed:SkinImage(@"SkinBtn")]
+                       forState:kControlStateNormal];
+    [skinBtn setBackgroundImage:[UIImage imageNamed:SkinImage(@"SkinBtn")]
+                       forState:kControlStateHighlighted];
+    [skinBtn setBackgroundImage:[UIImage imageNamed:SkinImage(@"SkinBtn")]
+                       forState:kControlStateSelected];
+    [skinBtn addTarget:self action:@selector(skinTapped:)
+      forControlEvents:kControlEventTouchUpInside];
+    [sAccountPanel addSubview:skinBtn];
+
+    /* 退出登录：与汉堡钮同款皮革圆钮（奶油电源符号 ⏻），面板右下贴边。
+       同材质族但符号语义清楚，不再用会跳出风格族的红色胶囊。 */
     UIButton *logoutBtn = [UIButton buttonWithType:kButtonTypeRounded];
-    [logoutBtn setFrame:CGRectMake(pw - 108.0f, h - 56.0f, 92.0f, 36.0f)];
-    [logoutBtn setTitle:@"退出登录" forState:kControlStateNormal];
-    [logoutBtn setTitleColor:[UIColor whiteColor] forState:kControlStateNormal];
-    [logoutBtn setTitleColor:[UIColor colorWithRed:0.99f green:0.88f blue:0.86f alpha:1.0f]
-                     forState:kControlStateHighlighted];
-    [[logoutBtn titleLabel] setFont:[UIFont boldSystemFontOfSize:14.0f]];
-    StylePillButton(logoutBtn, @"BtnRed", @"BtnRedDown", 13.0f,
-                    [UIColor colorWithRed:0.22f green:0.02f blue:0.02f alpha:0.8f]);
+    [logoutBtn setFrame:CGRectMake(pw - 48.0f, h - 44.0f, 30.0f, 30.0f)];
+    [logoutBtn setBackgroundImage:[UIImage imageNamed:SkinImage(@"LogoutBtn")]
+                         forState:kControlStateNormal];
+    [logoutBtn setBackgroundImage:[UIImage imageNamed:SkinImage(@"LogoutBtn")]
+                         forState:kControlStateHighlighted];
+    [logoutBtn setBackgroundImage:[UIImage imageNamed:SkinImage(@"LogoutBtn")]
+                         forState:kControlStateSelected];
     [logoutBtn addTarget:self action:@selector(logoutTapped:)
         forControlEvents:kControlEventTouchUpInside];
     [sAccountPanel addSubview:logoutBtn];
@@ -2843,15 +3300,38 @@ static void LoginStateChanged(int state, UIImage *qrcode, NSString *message)
     [UIView commitAnimations];
 }
 
+/* 皮肤切换：写持久化状态 -> 重建 rootViewController。
+   重建让所有 imageNamed:SkinImage() 按新皮肤重新取图，立即生效；
+   旧的账号面板随旧 VC 的 view 一起消失，符合"切完回到主界面"。 */
+- (void)skinTapped:(id)sender
+{
+    (void)sender;
+    /* 清掉可能引用旧界面的静态状态，避免重建后被延迟回调/动画打到野指针 */
+    sAccountPanel = nil;
+    sAccountShade = nil;
+    sAccountAnimating = 0;
+    sMenuOverlay = nil;
+    sMenuPanel = nil;
+    sMenuList = nil;
+    sMenuStitch = nil;
+    sMenuItems = nil;
+    sSelf = nil;
+    SkinToggle();
+    [AppDelegate rebuildRoot];
+}
+
 /* 退出登录：清数据/凭据 → 关面板 → 回热门 tab → 头像变登录 → 重新拉热门。
    关注/我的 的微博随 WeiboStoreLogout 一起被清空，下次需重新扫码登录。 */
 - (void)logoutTapped:(id)sender
 {
     (void)sender;
-    WeiboStoreLogout();                    /* 清凭据 + 持久化标记 + 清空三个 tab 数据 */
+    WeiboStoreLogout();                    /* 清凭据 + 持久化标记 + 清空帖子缓存 */
 
-    if (sSegGroove) SetTabIndex(0);
-    layoutSegmentBlock();                 /* 退出回热门：浮块同步 */
+    /* 登出 = 游客 = 热门（feed 0）。所有需要登录的流都不可用，
+       槽位复位避免重启后停在一个点了没反应的流上。 */
+    WeiboStoreSelectSlot(0, nil, nil);
+    SetTabIndex(0);
+    RefreshFeedTitle(0);
     [self refreshAccountArea];            /* 头像 → 登录按钮 */
 
     /* 面板滑出动画；动画结束后 sAccountPanel 释放 */
